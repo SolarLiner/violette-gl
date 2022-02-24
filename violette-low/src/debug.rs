@@ -38,10 +38,11 @@ pub enum CallbackSeverity {
     Notification = gl::DEBUG_SEVERITY_NOTIFICATION,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct GlDebugData {
     pub source: CallbackSource,
     pub r#type: CallbackType,
+    pub message: String,
     pub id: u32,
     pub severity: CallbackSeverity,
 }
@@ -63,6 +64,11 @@ extern "system" fn message_callback(
         let data = GlDebugData {
             source: CallbackSource::from_u32(source).unwrap(),
             r#type: CallbackType::from_u32(r#type).unwrap(),
+            message: {
+                let buf =
+                    bytemuck::cast_slice(unsafe { std::slice::from_raw_parts(message, length as _) });
+                String::from_utf8_lossy(buf).to_string()
+            },
             id,
             severity: CallbackSeverity::from_u32(severity).unwrap(),
         };

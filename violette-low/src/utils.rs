@@ -1,19 +1,35 @@
+use std::ffi::CStr;
+
 use anyhow::Context;
 use gl::types::{GLchar, GLsizei};
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 use thiserror::Error;
 
-pub fn get_string(getter: impl FnOnce(usize, *mut GLsizei, *mut GLchar)) -> String {
-    const BUFFER_LENGTH: usize = 1024;
-    let mut data = vec![0u8; BUFFER_LENGTH];
+/// Helper for converting OpenGL string messages into Rust's String type.
+pub(crate) fn gl_string(
+    planned_length: Option<usize>,
+    getter: impl FnOnce(usize, *mut GLsizei, *mut GLchar),
+) -> Option<String> {
+    let capacity = planned_length.unwrap_or(1024);
+    let mut data = vec![0u8; capacity];
     let mut length = 0;
-    getter(BUFFER_LENGTH, &mut length, data.as_mut_ptr() as *mut _);
-    String::from_utf8_lossy(&data[..length as usize]).to_string()
+    getter(capacity, &mut length, data.as_mut_ptr() as *mut _);
+
+    if length == 0 {
+        return None;
+    }
+    Some(
+        CStr::from_bytes_with_nul(&data)
+            .expect("OpenGL failure: corrupted string message")
+            .to_string_lossy()
+            .to_string(),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error, FromPrimitive)]
 #[repr(u32)]
+/// Rust Error type for OpenGL error sources
 pub enum GlError {
     #[error("Provided enum value is not valid")]
     InvalidEnum = gl::INVALID_ENUM,
@@ -33,17 +49,19 @@ pub enum GlError {
     ContextLost = gl::CONTEXT_LOST,
 }
 
-pub fn gl_error() -> anyhow::Result<()> {
+/// Utility function to catch errors as raised by OpenGL
+pub(crate) fn gl_error() -> anyhow::Result<()> {
     let error = unsafe { gl::GetError() };
     if error != gl::NO_ERROR {
-        GlError::from_u32(error)
-            .map(|err| Err(err).context("OpenGL error"))
-            .unwrap_or(Err(anyhow::anyhow!("Unknown OpenGL error")))
+        Err(GlError::from_u32(error)
+            .map(|err| anyhow::anyhow!("OpenGL Error: {} (check debug log for more details)", err))
+            .unwrap_or(anyhow::anyhow!("Unknown OpenGL error (check debug log for more details)")))
     } else {
         Ok(())
     }
 }
 
+/// Utility to run a closure, checking for any OpenGL errors before returning the result
 pub fn gl_error_guard<T, F: FnOnce() -> T>(run: F) -> anyhow::Result<T> {
     let ret = run();
     gl_error()?;
