@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 use std::{marker::PhantomData, num::NonZeroU32};
 
-use bytemuck::Pod;
+use bytemuck::{try_cast_box, Pod};
 use duplicate::duplicate;
 use gl::types::GLenum;
 use num_derive::FromPrimitive;
@@ -136,13 +136,32 @@ impl<F: TextureFormat> TextureFormat for Normalized<F> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DepthStencil<F, S>(PhantomData<(F, S)>);
+
+impl TextureFormat for DepthStencil<f32, ()> {
+    type Subpixel = f32;
+    const COUNT: usize = 1;
+    const FORMAT: GLenum = gl::DEPTH_COMPONENT32;
+    const INTERNAL_FORMAT: GLenum = gl::DEPTH;
+    const NORMALIZED: bool = false;
+}
+
+impl TextureFormat for DepthStencil<f32, u8> {
+    type Subpixel = f32;
+    const COUNT: usize = 1;
+    const FORMAT: GLenum = gl::DEPTH32F_STENCIL8;
+    const INTERNAL_FORMAT: GLenum = gl::DEPTH_STENCIL;
+    const NORMALIZED: bool = false;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextureId {
     id: NonZeroU32,
-    target: Dimension,
+    pub target: TextureTarget,
 }
 
 impl TextureId {
-    pub fn new(id: u32, target: Dimension) -> Option<Self> {
+    pub fn new(id: u32, target: TextureTarget) -> Option<Self> {
         Some(Self {
             id: NonZeroU32::new(id)?,
             target,
@@ -168,14 +187,48 @@ pub enum Dimension {
     D3 = gl::TEXTURE_3D,
 }
 
-impl Dimension {
-    fn binding_const(&self) -> u32 {
-        match self {
-            Self::D1 => gl::TEXTURE_BINDING_1D,
-            Self::D1Array => gl::TEXTURE_BINDING_1D_ARRAY,
-            Self::D2 => gl::TEXTURE_BINDING_2D,
-            Self::D2Array => gl::TEXTURE_BINDING_2D_ARRAY,
-            Self::D3 => gl::TEXTURE_BINDING_3D,
+#[derive(Debug, Clone, Copy)]
+pub struct TextureTarget {
+    pub dim: Dimension,
+    pub samples: NonZeroU32,
+}
+
+impl PartialEq for TextureTarget {
+    fn eq(&self, other: &Self) -> bool {
+        self.gl_target().eq(&other.gl_target())
+    }
+}
+impl Eq for TextureTarget {}
+
+impl TextureTarget {
+    pub fn is_multisample(&self) -> bool {
+        self.samples.get() > 1
+    }
+
+    pub fn gl_target(&self) -> GLenum {
+        use Dimension::*;
+
+        match (self.dim, self.is_multisample()) {
+            (D1, _) => gl::TEXTURE_1D,
+            (D1Array, _) => gl::TEXTURE_1D_ARRAY,
+            (D2, false) => gl::TEXTURE_2D,
+            (D2, true) => gl::TEXTURE_2D_MULTISAMPLE,
+            (D2Array, false) => gl::TEXTURE_2D_ARRAY,
+            (D2Array, true) => gl::TEXTURE_2D_MULTISAMPLE_ARRAY,
+            (D3, _) => gl::TEXTURE_3D,
+        }
+    }
+
+    pub fn binding_const(&self) -> GLenum {
+        use Dimension::*;
+        match (self.dim, self.is_multisample()) {
+            (D1, _) => gl::TEXTURE_BINDING_1D,
+            (D1Array, _) => gl::TEXTURE_BINDING_1D_ARRAY,
+            (D2, false) => gl::TEXTURE_BINDING_2D,
+            (D2, true) => gl::TEXTURE_BINDING_2D_MULTISAMPLE_ARRAY,
+            (D2Array, false) => gl::TEXTURE_BINDING_2D_ARRAY,
+            (D2Array, true) => gl::TEXTURE_BINDING_2D_MULTISAMPLE_ARRAY,
+            (D3, _) => gl::TEXTURE_BINDING_3D,
         }
     }
 }
@@ -201,7 +254,7 @@ pub struct TextureUnit(pub u32);
 
 impl Uniform for TextureUnit {
     unsafe fn write_uniform(&self, location: gl::types::GLint) {
-        tracing::trace!("glUniform1i(<location>, GL_TEXTURE_{})", self.0);
+        tracing::trace!("glUniform1i(<location>, GL_TEXTURE{})", self.0);
         gl::Uniform1i(location, self.0 as _);
     }
 }
@@ -219,7 +272,7 @@ pub struct Texture<F> {
 impl<'a, F: 'a> Resource<'a> for Texture<F> {
     type Id = TextureId;
 
-    type Kind = Dimension;
+    type Kind = TextureTarget;
 
     type Bound = BoundTexture<'a, F>;
 
@@ -242,14 +295,23 @@ impl<'a, F: 'a> Resource<'a> for Texture<F> {
                 gl::ActiveTexture(unit);
             }
             tracing::trace!("glBindTexture({:?}, {})", self.id.target, self.id.get());
-            gl::BindTexture(self.id.target as _, self.id.get());
+            gl::BindTexture(self.id.target.gl_target(), self.id.get());
         }
         Ok(BoundTexture { texture: self })
     }
 }
 
 impl<F> Texture<F> {
-    pub fn new(width: u32, height: u32, depth: u32, target: Dimension) -> Self {
+    pub fn new(width: u32, height: u32, depth: u32, dim: Dimension) -> Self {
+        Self::new_multisampled(width, height, depth, dim, NonZeroU32::new(1).unwrap())
+    }
+    pub fn new_multisampled(
+        width: u32,
+        height: u32,
+        depth: u32,
+        dim: Dimension,
+        samples: NonZeroU32,
+    ) -> Self {
         let mut id = 0;
         unsafe { gl::GenTextures(1, &mut id) }
         Self {
@@ -257,26 +319,26 @@ impl<F> Texture<F> {
             width,
             height,
             depth,
-            id: TextureId::new(id, target).unwrap(),
+            id: TextureId::new(id, TextureTarget { dim, samples }).unwrap(),
             unit: None,
         }
     }
 
     pub fn wrap_s(&mut self, wrap: TextureWrap) -> anyhow::Result<()> {
         gl_error_guard(|| unsafe {
-            gl::TexParameteri(self.id.target as _, gl::TEXTURE_WRAP_S, wrap as _);
+            gl::TexParameteri(self.id.target.gl_target(), gl::TEXTURE_WRAP_S, wrap as _);
         })
     }
 
     pub fn wrap_t(&mut self, wrap: TextureWrap) -> anyhow::Result<()> {
         gl_error_guard(|| unsafe {
-            gl::TexParameteri(self.id.target as _, gl::TEXTURE_WRAP_T, wrap as _);
+            gl::TexParameteri(self.id.target.gl_target(), gl::TEXTURE_WRAP_T, wrap as _);
         })
     }
 
     pub fn wrap_r(&mut self, wrap: TextureWrap) -> anyhow::Result<()> {
         gl_error_guard(|| unsafe {
-            gl::TexParameteri(self.id.target as _, gl::TEXTURE_WRAP_R, wrap as _);
+            gl::TexParameteri(self.id.target.gl_target(), gl::TEXTURE_WRAP_R, wrap as _);
         })
     }
 
@@ -289,7 +351,11 @@ impl<F> Texture<F> {
             (Linear, Nearest) => gl::LINEAR_MIPMAP_NEAREST,
         };
         gl_error_guard(|| unsafe {
-            gl::TexParameteri(self.id.target as _, gl::TEXTURE_MIN_FILTER, param as _)
+            gl::TexParameteri(
+                self.id.target.gl_target(),
+                gl::TEXTURE_MIN_FILTER,
+                param as _,
+            )
         })
     }
 
@@ -302,7 +368,11 @@ impl<F> Texture<F> {
             (Linear, Nearest) => gl::LINEAR_MIPMAP_NEAREST,
         };
         gl_error_guard(|| unsafe {
-            gl::TexParameteri(self.id.target as _, gl::TEXTURE_MAG_FILTER, param as _)
+            gl::TexParameteri(
+                self.id.target.gl_target(),
+                gl::TEXTURE_MAG_FILTER,
+                param as _,
+            )
         })
     }
 
@@ -312,6 +382,22 @@ impl<F> Texture<F> {
 
     pub fn unset_texture_unit(&mut self) {
         self.unit.take();
+    }
+
+    pub fn dimension(&self) -> Dimension {
+        self.id.target.dim
+    }
+
+    pub fn samples(&self) -> u32 {
+        self.id.target.samples.get()
+    }
+
+    pub fn is_multisample(&self) -> bool {
+        self.id.target.is_multisample()
+    }
+
+    pub(crate) fn id(&self) -> u32 {
+        self.id.get()
     }
 }
 
@@ -360,7 +446,7 @@ impl<'a, F> Binding<'a> for BoundTexture<'a, F> {
     fn unbind(&mut self, previous: Option<TextureId>) {
         unsafe {
             gl::BindTexture(
-                self.id.target as _,
+                self.id.target.gl_target(),
                 previous.as_ref().map(|id| id.get()).unwrap_or(0),
             );
         }
@@ -377,9 +463,10 @@ impl<'a, F: TextureFormat> BoundTexture<'a, F> {
 
         let bytes: &[u8] = bytemuck::cast_slice(data);
         gl_error_guard(|| unsafe {
-            match self.id.target {
-                Dimension::D2 => gl::TexImage2D(
-                    self.id.target as _,
+            use Dimension::*;
+            match (self.id.target.dim, self.id.target.is_multisample()) {
+                (D2, false) => gl::TexImage2D(
+                    self.id.target.gl_target(),
                     0,
                     F::INTERNAL_FORMAT as _,
                     self.width as _,
@@ -388,6 +475,14 @@ impl<'a, F: TextureFormat> BoundTexture<'a, F> {
                     F::FORMAT,
                     F::Subpixel::GL_TYPE,
                     bytes.as_ptr() as *const _,
+                ),
+                (D2, true) => gl::TexImage2DMultisample(
+                    self.id.target.gl_target(),
+                    self.id.target.samples.get() as _,
+                    F::INTERNAL_FORMAT as _,
+                    self.width as _,
+                    self.height as _,
+                    gl::TRUE,
                 ),
                 _ => todo!(),
             }
@@ -398,7 +493,7 @@ impl<'a, F: TextureFormat> BoundTexture<'a, F> {
 
     pub fn generate_mipmaps(&mut self) -> anyhow::Result<()> {
         gl_error_guard(|| unsafe {
-            gl::GenerateMipmap(self.id.target as _);
+            gl::GenerateMipmap(self.id.target.gl_target());
         })
     }
 }

@@ -4,13 +4,14 @@ use std::{
     num::NonZeroU32,
     ops::{Range, RangeBounds},
 };
+use duplicate::duplicate;
 
 use crate::{
     base::{
         bindable::{BindableExt, Binding, Resource},
         GlType,
     },
-    buffer::Buffer,
+    buffer::{Buffer, BufferId},
     program::ActiveProgram,
     utils::gl_error_guard,
 };
@@ -42,8 +43,8 @@ pub enum DrawMode {
 
 #[derive(Debug)]
 pub struct VertexArray {
-    draw_mode: DrawMode,
     id: VaoId,
+    bound_buffers: Vec<BufferId>,
 }
 
 impl<'a> Resource<'a> for VertexArray {
@@ -73,14 +74,25 @@ impl<'a> Resource<'a> for VertexArray {
 }
 
 impl VertexArray {
-    pub fn new(draw_mode: DrawMode) -> Self {
+    pub fn new() -> Self {
         let mut id = 0;
         unsafe {
             gl::GenVertexArrays(1, &mut id);
         }
         Self {
             id: VaoId::new(id).unwrap(),
-            draw_mode,
+            bound_buffers: vec![],
+        }
+    }
+}
+
+impl Drop for VertexArray {
+    fn drop(&mut self) {
+        unsafe {
+            let ids = self.bound_buffers.drain(..).map(|id| id.get()).collect::<Vec<_>>();
+            gl::DeleteBuffers(self.bound_buffers.len() as _, ids.as_ptr());
+            let vid = self.id.get();
+            gl::DeleteVertexArrays(1, &vid);
         }
     }
 }
@@ -130,7 +142,10 @@ impl<'a> BoundVao<'a> {
         &mut self,
         vertex_buffer: Buffer<V>,
     ) -> anyhow::Result<()> {
+        // Don't run ``drop` on the buffer to be bound - we don't want the GPU buffers to be
+        // deleted when exiting the scope
         let mut vertex_buffer = ManuallyDrop::new(vertex_buffer);
+        self.bound_buffers.push(vertex_buffer.id);
         gl_error_guard(|| {
             let _vbuf_bind = vertex_buffer.bind();
             self.set_vertex_attributes::<V::Attr>();
@@ -138,40 +153,6 @@ impl<'a> BoundVao<'a> {
                 self.enable_vertex_attribute(i as _);
             }
         })
-    }
-
-    pub fn draw(&mut self, _prog_binding: &ActiveProgram, range: Range<i32>) {
-        tracing::trace!(
-            "glDrawArrays({:?}, {}, {})",
-            self.draw_mode,
-            range.start,
-            range.end
-        );
-        unsafe {
-            gl::DrawArrays(self.draw_mode as _, range.start, range.end);
-        }
-    }
-
-    pub fn draw_indexed<I: GlType>(
-        &mut self,
-        _prog_binding: &ActiveProgram,
-        _ibuf_binding: &Buffer<I>,
-    ) {
-        tracing::trace!(
-            "glDrawElements({:?}, {}, {:x} ({}), 0)",
-            self.draw_mode,
-            _ibuf_binding.len(),
-            I::GL_TYPE,
-            std::any::type_name::<I>()
-        );
-        unsafe {
-            gl::DrawElements(
-                self.draw_mode as _,
-                _ibuf_binding.len() as _,
-                I::GL_TYPE,
-                std::ptr::null(),
-            );
-        }
     }
 }
 

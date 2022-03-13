@@ -62,3 +62,26 @@ impl<T: GlType> GlType for Normalized<T> {
     const NORMALIZED: bool = true;
     const STRIDE: usize = T::STRIDE;
 }
+
+#[cfg(feature = "vertex-glam")]
+#[duplicate(
+    rust_t          n       gl_t;
+    [glam::Vec2]    [2]     [gl::FLOAT];
+    [glam::DVec2]   [2]     [gl::DOUBLE];
+    [glam::UVec2]   [2]     [gl::UNSIGNED_INT];
+    [glam::IVec2]   [2]     [gl::INT];
+    [glam::Vec3]    [3]     [gl::FLOAT];
+    [glam::DVec3]   [3]     [gl::DOUBLE];
+    [glam::UVec3]   [3]     [gl::UNSIGNED_INT];
+    [glam::IVec3]   [3]     [gl::INT];
+    [glam::Vec4]    [4]     [gl::FLOAT];
+    [glam::DVec4]   [4]     [gl::DOUBLE];
+    [glam::UVec4]   [4]     [gl::UNSIGNED_INT];
+    [glam::IVec4]   [4]     [gl::INT];
+)]
+impl GlType for rust_t {
+    const GL_TYPE: GLenum = gl_t;
+    const NUM_COMPONENTS: usize = n;
+    const NORMALIZED: bool = false;
+    const STRIDE: usize = std::mem::size_of::<Self>();
+}
