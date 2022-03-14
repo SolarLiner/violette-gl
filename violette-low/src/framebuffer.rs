@@ -48,6 +48,40 @@ bitflags! {
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[repr(u32)]
+pub enum DepthTestFunction {
+    Less = gl::LESS,
+    Equal = gl::EQUAL,
+    LEqual = gl::LEQUAL,
+    Greater = gl::GREATER,
+    NotEqual = gl::NOTEQUAL,
+    GEqual = gl::GEQUAL,
+    Always = gl::ALWAYS,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum FramebufferFeature {
+    DepthTest(DepthTestFunction),
+}
+
+impl FramebufferFeature {
+    unsafe fn enable(&self) {
+        match self {
+            &Self::DepthTest(func) => {
+                gl::Enable(gl::DEPTH_TEST);
+                gl::DepthFunc(func as _)
+            }
+        }
+    }
+
+    unsafe fn disable(&self) {
+        gl::Disable(match self {
+            Self::DepthTest(_) => gl::DEPTH_TEST,
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct Framebuffer {
     id: FramebufferId,
@@ -147,6 +181,16 @@ impl<'a> BoundFB<'a> {
         unsafe {
             gl::Clear(mode.bits());
         }
+    }
+
+    pub fn enable_feature(&mut self, feature: FramebufferFeature) -> anyhow::Result<()> {
+        gl_error_guard(|| unsafe {
+            feature.enable();
+        })
+    }
+
+    pub fn disable_feature(&mut self, feature: FramebufferFeature) -> anyhow::Result<()> {
+        gl_error_guard(|| unsafe { feature.disable(); })
     }
 
     pub fn draw(&mut self, mode: DrawMode, vertices: Range<i32>) -> anyhow::Result<()> {
