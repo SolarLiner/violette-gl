@@ -1,4 +1,7 @@
 use std::ffi::CStr;
+use std::marker::PhantomData;
+use std::mem::ManuallyDrop;
+use std::ops::{Deref, DerefMut};
 
 use anyhow::Context;
 use gl::types::{GLchar, GLsizei};
@@ -55,7 +58,9 @@ pub(crate) fn gl_error() -> anyhow::Result<()> {
     if error != gl::NO_ERROR {
         Err(GlError::from_u32(error)
             .map(|err| anyhow::anyhow!("OpenGL Error: {} (check debug log for more details)", err))
-            .unwrap_or(anyhow::anyhow!("Unknown OpenGL error (check debug log for more details)")))
+            .unwrap_or(anyhow::anyhow!(
+                "Unknown OpenGL error (check debug log for more details)"
+            )))
     } else {
         Ok(())
     }
@@ -66,4 +71,37 @@ pub fn gl_error_guard<T, F: FnOnce() -> T>(run: F) -> anyhow::Result<T> {
     let ret = run();
     gl_error()?;
     Ok(ret)
+}
+
+/// OpenGL reference type. This is used for values across boundaries with the OpenGL API, to allow
+/// owned types to behave as references, preventing the execution of `Drop` and used as a work-around
+/// for not being able to return temporary variables (i.e. reconstructing a Violette value from scratch
+/// when it is owned somewhere else).
+#[derive(Debug)]
+pub struct GlRef<'a, T> {
+    value: ManuallyDrop<T>,
+    __ref: PhantomData<&'a mut T>,
+}
+
+impl<'a, T> Deref for GlRef<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.value.deref()
+    }
+}
+
+impl<'a, T> DerefMut for GlRef<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.value.deref_mut()
+    }
+}
+
+impl<'a, T> GlRef<'a, T> {
+    pub(crate) fn create(value: T) -> Self {
+        Self {
+            value: ManuallyDrop::new(value),
+            __ref: PhantomData,
+        }
+    }
 }

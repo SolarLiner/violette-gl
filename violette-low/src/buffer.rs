@@ -94,6 +94,21 @@ pub struct Buffer<T> {
     length: usize,
 }
 
+impl<T> Buffer<T> {
+    pub(crate) unsafe fn from_id(id: BufferId) -> Self {
+        let size = {
+            let mut size = 0;
+            gl::GetNamedBufferParameteriv(id.get(), gl::BUFFER_SIZE, &mut size);
+            size
+        };
+        Self {
+            __type: PhantomData,
+            id,
+            length: size as usize / std::mem::size_of::<T>(),
+        }
+    }
+}
+
 impl<T> Drop for Buffer<T> {
     fn drop(&mut self) {
         unsafe { gl::DeleteBuffers(1, [self.id.get()].as_ptr()) }

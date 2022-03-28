@@ -17,6 +17,7 @@ use crate::{
     utils::gl_error_guard,
     vertex::DrawMode,
 };
+use crate::vertex::BoundVao;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FramebufferId(u32);
@@ -193,7 +194,7 @@ impl<'a> BoundFB<'a> {
         gl_error_guard(|| unsafe { feature.disable(); })
     }
 
-    pub fn draw(&mut self, mode: DrawMode, vertices: Range<i32>) -> anyhow::Result<()> {
+    pub fn draw(&mut self, _vao_binding: &mut BoundVao, mode: DrawMode, vertices: Range<i32>) -> anyhow::Result<()> {
         gl_error_guard(|| unsafe {
             gl::DrawArrays(mode as _, vertices.start, vertices.end - vertices.start);
         })
@@ -201,8 +202,9 @@ impl<'a> BoundFB<'a> {
 
     pub fn draw_elements<I: GlType, B: RangeBounds<i32>>(
         &mut self,
-        mode: DrawMode,
+        _vao_binding: &mut BoundVao,
         buffer: &BoundBuffer<I>,
+        mode: DrawMode,
         slice: B,
     ) -> anyhow::Result<()> {
         let slice = normalize_range(slice, 0..buffer.len() as _);

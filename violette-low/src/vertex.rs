@@ -1,11 +1,14 @@
+use std::any::{Any, TypeId};
 use std::{
     marker::PhantomData,
     mem::ManuallyDrop,
     num::NonZeroU32,
     ops::{Range, RangeBounds},
 };
+
 use duplicate::duplicate;
 
+use crate::utils::GlRef;
 use crate::{
     base::{
         bindable::{BindableExt, Binding, Resource},
@@ -38,13 +41,28 @@ impl VaoId {
 #[repr(u32)]
 #[non_exhaustive]
 pub enum DrawMode {
+    Points = gl::POINTS,
     TrianglesList = gl::TRIANGLES,
+    Wireframe = gl::LINES,
 }
 
 #[derive(Debug)]
 pub struct VertexArray {
     id: VaoId,
-    bound_buffers: Vec<BufferId>,
+    bound_buffers: Vec<(TypeId, BufferId)>,
+}
+
+impl VertexArray {
+    /// Get nth bound buffer. Returned buffer is marked as "manually drop" to prevent running its
+    /// destructor, as it is owned by
+    pub fn buffer<V: 'static + Any>(&self, i: usize) -> Option<GlRef<'_, Buffer<V>>> {
+        let (type_id, id) = self.bound_buffers.get(i).copied()?;
+        if TypeId::of::<V>() != type_id {
+            None
+        } else {
+            Some(GlRef::create(unsafe { Buffer::from_id(id) }))
+        }
+    }
 }
 
 impl<'a> Resource<'a> for VertexArray {
@@ -89,7 +107,11 @@ impl VertexArray {
 impl Drop for VertexArray {
     fn drop(&mut self) {
         unsafe {
-            let ids = self.bound_buffers.drain(..).map(|id| id.get()).collect::<Vec<_>>();
+            let ids = self
+                .bound_buffers
+                .drain(..)
+                .map(|(_, id)| id.get())
+                .collect::<Vec<_>>();
             gl::DeleteBuffers(self.bound_buffers.len() as _, ids.as_ptr());
             let vid = self.id.get();
             gl::DeleteVertexArrays(1, &vid);
@@ -138,14 +160,15 @@ impl<'a> BoundVao<'a> {
         }
     }
 
-    pub fn with_vertex_buffer<V: AsVertexAttributes>(
+    pub fn with_vertex_buffer<V: 'static + AsVertexAttributes>(
         &mut self,
         vertex_buffer: Buffer<V>,
     ) -> anyhow::Result<()> {
         // Don't run ``drop` on the buffer to be bound - we don't want the GPU buffers to be
         // deleted when exiting the scope
         let mut vertex_buffer = ManuallyDrop::new(vertex_buffer);
-        self.bound_buffers.push(vertex_buffer.id);
+        self.bound_buffers
+            .push((TypeId::of::<V>(), vertex_buffer.id));
         gl_error_guard(|| {
             let _vbuf_bind = vertex_buffer.bind();
             self.set_vertex_attributes::<V::Attr>();
