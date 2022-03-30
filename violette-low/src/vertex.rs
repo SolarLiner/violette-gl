@@ -43,7 +43,9 @@ impl VaoId {
 pub enum DrawMode {
     Points = gl::POINTS,
     TrianglesList = gl::TRIANGLES,
-    Wireframe = gl::LINES,
+    Lines = gl::LINES,
+    LineLoop = gl::LINE_LOOP,
+    LineStrip = gl::LINE_STRIP,
 }
 
 #[derive(Debug)]
@@ -53,8 +55,6 @@ pub struct VertexArray {
 }
 
 impl VertexArray {
-    /// Get nth bound buffer. Returned buffer is marked as "manually drop" to prevent running its
-    /// destructor, as it is owned by
     pub fn buffer<V: 'static + Any>(&self, i: usize) -> Option<GlRef<'_, Buffer<V>>> {
         let (type_id, id) = self.bound_buffers.get(i).copied()?;
         if TypeId::of::<V>() != type_id {
