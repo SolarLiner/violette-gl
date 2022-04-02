@@ -6,6 +6,7 @@ use std::{
 use bitflags::bitflags;
 use gl::types::GLuint;
 
+use crate::vertex::BoundVao;
 use crate::{
     base::{
         bindable::{Binding, Resource},
@@ -17,7 +18,7 @@ use crate::{
     utils::gl_error_guard,
     vertex::DrawMode,
 };
-use crate::vertex::BoundVao;
+use crate::texture::BoundTexture;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FramebufferId(u32);
@@ -47,6 +48,30 @@ bitflags! {
         const DEPTH = gl::DEPTH_BUFFER_BIT;
         const STENCIL = gl::STENCIL_BUFFER_BIT;
     }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[repr(u32)]
+pub enum Blend {
+    Zero = gl::ZERO,
+    One = gl::ONE,
+    SrcColor = gl::SRC_COLOR,
+    OneMinusSrcColor = gl::ONE_MINUS_SRC_COLOR,
+    DstColor = gl::DST_COLOR,
+    OneMinusDstColor = gl::ONE_MINUS_DST_COLOR,
+    SrcAlpha = gl::SRC_ALPHA,
+    OneMinusSrcAlpha = gl::ONE_MINUS_SRC_ALPHA,
+    DstAlpha = gl::DST_ALPHA,
+    OneMinusDstAlpha = gl::ONE_MINUS_DST_ALPHA,
+    ConstantColor = gl::CONSTANT_COLOR,
+    OneMinusConstantColor = gl::ONE_MINUS_CONSTANT_COLOR,
+    ConstantAlpha = gl::CONSTANT_ALPHA,
+    OneMinusConstantAlpha = gl::ONE_MINUS_CONSTANT_ALPHA,
+    SrcAlphaSaturate = gl::SRC_ALPHA_SATURATE,
+    Src1Color = gl::SRC1_COLOR,
+    OneMinusSrc1Color = gl::ONE_MINUS_SRC1_COLOR,
+    Src1Alpha = gl::SRC1_ALPHA,
+    OneMinusSrc1Alpha = gl::ONE_MINUS_SRC1_ALPHA,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -108,6 +133,17 @@ impl Framebuffer {
     pub const fn backbuffer() -> Self {
         Self {
             id: FramebufferId::BACKBUFFER,
+        }
+    }
+
+    pub fn new() -> Framebuffer {
+        let id = unsafe {
+            let mut fbo = 0;
+            gl::GenFramebuffers(1, &mut fbo);
+            fbo
+        };
+        Self {
+            id: FramebufferId::new(id).unwrap(),
         }
     }
 }
@@ -191,10 +227,21 @@ impl<'a> BoundFB<'a> {
     }
 
     pub fn disable_feature(&mut self, feature: FramebufferFeature) -> anyhow::Result<()> {
-        gl_error_guard(|| unsafe { feature.disable(); })
+        gl_error_guard(|| unsafe {
+            feature.disable();
+        })
     }
 
-    pub fn draw(&mut self, _vao_binding: &mut BoundVao, mode: DrawMode, vertices: Range<i32>) -> anyhow::Result<()> {
+    pub fn set_blending(&mut self, blend_source: Blend, blend_dest: Blend) -> anyhow::Result<()> {
+        gl_error_guard(|| unsafe { gl::BlendFunc(blend_source as _, blend_dest as _) })
+    }
+
+    pub fn draw(
+        &mut self,
+        _vao_binding: &mut BoundVao,
+        mode: DrawMode,
+        vertices: Range<i32>,
+    ) -> anyhow::Result<()> {
         gl_error_guard(|| unsafe {
             gl::DrawArrays(mode as _, vertices.start, vertices.end - vertices.start);
         })
@@ -214,7 +261,7 @@ impl<'a> BoundFB<'a> {
         })
     }
 
-    pub fn attach_color<F>(&mut self, attachment: u8, texture: &Texture<F>) -> anyhow::Result<()> {
+    pub fn attach_color<F>(&mut self, attachment: u8, texture: &BoundTexture<F>) -> anyhow::Result<()> {
         gl_error_guard(|| unsafe {
             match texture.dimension() {
                 Dimension::D1 => gl::FramebufferTexture1D(
@@ -246,7 +293,7 @@ impl<'a> BoundFB<'a> {
 
     pub fn attach_depth<D>(
         &mut self,
-        texture: &Texture<DepthStencil<D, ()>>,
+        texture: &BoundTexture<DepthStencil<D, ()>>,
     ) -> anyhow::Result<()> {
         gl_error_guard(|| unsafe {
             match texture.dimension() {
@@ -279,7 +326,7 @@ impl<'a> BoundFB<'a> {
 
     pub fn attach_depth_stencil<D, S>(
         &mut self,
-        texture: &Texture<DepthStencil<D, S>>,
+        texture: &BoundTexture<DepthStencil<D, S>>,
     ) -> anyhow::Result<()> {
         gl_error_guard(|| unsafe {
             match texture.dimension() {
