@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::num::NonZeroI32;
 use std::path::Path;
 use std::{ffi::CString, marker::PhantomData, num::NonZeroU32};
 
@@ -6,6 +7,7 @@ use duplicate::duplicate;
 use gl::types::{GLdouble, GLfloat, GLint, GLuint};
 
 use crate::base::bindable::{Binding, Resource};
+use crate::buffer::{Buffer, BufferKind, BufferSlice};
 use crate::shader::Shader;
 use crate::utils::gl_error_guard;
 use crate::{shader::ShaderId, utils::gl_string};
@@ -104,7 +106,7 @@ impl Uniform for [[gl_t; 4]; 4] {
     }
 }
 
-#[cfg(feature="uniforms-glam")]
+#[cfg(feature = "uniforms-glam")]
 #[duplicate(
     glam_t      ;
     [glam::Vec2];
@@ -121,7 +123,7 @@ impl Uniform for glam_t {
     }
 }
 
-#[cfg(feature="uniforms-glam")]
+#[cfg(feature = "uniforms-glam")]
 #[duplicate(
     glam_t;
     [glam::Mat2];
@@ -141,13 +143,35 @@ impl Uniform for glam_t {
 /// Structure allowing uniforms to be written into a program.
 pub struct UniformLocation<'a, Type> {
     ty: PhantomData<&'a Type>,
-    location: GLuint,
+    location: u32,
 }
 
 impl<'a, Type: Uniform> UniformLocation<'a, Type> {
     pub fn set(&self, value: Type) -> anyhow::Result<()> {
         gl_error_guard(|| unsafe {
             value.write_uniform(self.location as _);
+        })
+    }
+}
+
+pub struct UniformBlockIndex<'a, T> {
+    ty: PhantomData<&'a T>,
+    program: ProgramId,
+    binding: u32,
+    block_index: u32,
+}
+
+impl<'a, T> UniformBlockIndex<'a, T> {
+    pub fn bind_block(&self, buf: &BufferSlice<T>) -> anyhow::Result<()> {
+        gl_error_guard(|| unsafe {
+            gl::BindBufferRange(
+                buf.bound_buffer.kind() as _,
+                self.binding,
+                buf.bound_buffer.id.get(),
+                buf.offset,
+                buf.size,
+            );
+            gl::UniformBlockBinding(self.program.get(), self.block_index, self.binding);
         })
     }
 }
@@ -395,6 +419,29 @@ impl<'a> ActiveProgram<'a> {
         } else {
             None
         }
+    }
+
+    pub fn uniform_block<T>(
+        &self,
+        name: &str,
+        binding: u32,
+    ) -> anyhow::Result<UniformBlockIndex<T>> {
+        let block_index = gl_error_guard(|| unsafe {
+            let name = CString::new(name).unwrap();
+            gl::GetUniformBlockIndex(self.program.id.get(), name.as_ptr() as *const _)
+        })?;
+        tracing::trace!(
+            "glGetUniformBlockIndex({}, {}) -> {}",
+            self.id.get(),
+            name,
+            block_index
+        );
+        Ok(UniformBlockIndex {
+            ty: PhantomData,
+            block_index,
+            binding,
+            program: self.id,
+        })
     }
 }
 
