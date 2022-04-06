@@ -1,24 +1,20 @@
-use std::{
-    num::NonZeroU32,
-    ops::{Range, RangeBounds},
-};
+use std::ops::{Range, RangeBounds};
 
 use bitflags::bitflags;
 use gl::types::GLuint;
+use num_derive::FromPrimitive;
+use num_traits::FromPrimitive;
 
-use crate::vertex::BoundVao;
 use crate::{
     base::{
         bindable::{Binding, Resource},
         GlType,
     },
     buffer::BoundBuffer,
-    program::ActiveProgram,
-    texture::{DepthStencil, Dimension, Texture},
+    texture::{BoundTexture, DepthStencil, Dimension, Texture},
     utils::gl_error_guard,
-    vertex::DrawMode,
+    vertex::{BoundVao, DrawMode},
 };
-use crate::texture::BoundTexture;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FramebufferId(u32);
@@ -39,6 +35,10 @@ impl FramebufferId {
             return None;
         }
         Some(FramebufferId(id))
+    }
+
+    fn get(&self) -> u32 {
+        self.0
     }
 }
 
@@ -108,6 +108,20 @@ impl FramebufferFeature {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive)]
+#[repr(u32)]
+pub enum FramebufferStatus {
+    Undefined = gl::FRAMEBUFFER_UNDEFINED,
+    IncompleteAttachment = gl::FRAMEBUFFER_INCOMPLETE_ATTACHMENT,
+    MissingAttachment = gl::FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT,
+    IncompleteDrawBuffer = gl::FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER,
+    IncompleteReadBuffer = gl::FRAMEBUFFER_INCOMPLETE_READ_BUFFER,
+    Unsupported = gl::FRAMEBUFFER_UNSUPPORTED,
+    IncompleteMultisample = gl::FRAMEBUFFER_INCOMPLETE_MULTISAMPLE,
+    IncompleteLayerTargets = gl::FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS,
+    Complete = gl::FRAMEBUFFER_COMPLETE,
+}
+
 #[derive(Debug)]
 pub struct Framebuffer {
     id: FramebufferId,
@@ -168,8 +182,10 @@ impl<'a> Resource<'a> for Framebuffer {
     }
 
     fn make_binding(&'a mut self) -> anyhow::Result<Self::Bound> {
-        unsafe {
-            gl::BindFramebuffer(gl::FRAMEBUFFER, self.id.0 as _);
+        if Self::current(()) != Some(self.id) {
+            unsafe {
+                gl::BindFramebuffer(gl::FRAMEBUFFER, self.id.0 as _);
+            }
         }
         Ok(BoundFB { fb: self })
     }
@@ -214,10 +230,10 @@ impl<'a> BoundFB<'a> {
         }
     }
 
-    pub fn do_clear(&mut self, mode: ClearBuffer) {
-        unsafe {
+    pub fn do_clear(&mut self, mode: ClearBuffer) -> anyhow::Result<()> {
+        gl_error_guard(|| unsafe {
             gl::Clear(mode.bits());
-        }
+        })
     }
 
     pub fn enable_feature(&mut self, feature: FramebufferFeature) -> anyhow::Result<()> {
@@ -261,7 +277,9 @@ impl<'a> BoundFB<'a> {
         })
     }
 
-    pub fn attach_color<F>(&mut self, attachment: u8, texture: &BoundTexture<F>) -> anyhow::Result<()> {
+    pub fn attach_color<F>(&mut self, attachment: u8, texture: &Texture<F>) -> anyhow::Result<()> {
+        tracing::trace!("glFramebufferTexture{}D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT_{}, GL_TEXTURE_{}D, {}, 0)",
+            texture.dimension().num_dimension(), attachment, texture.dimension().num_dimension(), texture.id());
         gl_error_guard(|| unsafe {
             match texture.dimension() {
                 Dimension::D1 => gl::FramebufferTexture1D(
@@ -293,8 +311,13 @@ impl<'a> BoundFB<'a> {
 
     pub fn attach_depth<D>(
         &mut self,
-        texture: &BoundTexture<DepthStencil<D, ()>>,
+        texture: &Texture<DepthStencil<D, ()>>,
     ) -> anyhow::Result<()> {
+        tracing::trace!(
+            "glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_{}D, {}, 0)",
+            texture.dimension().num_dimension(),
+            texture.id()
+        );
         gl_error_guard(|| unsafe {
             match texture.dimension() {
                 Dimension::D1 => gl::FramebufferTexture2D(
@@ -355,6 +378,18 @@ impl<'a> BoundFB<'a> {
                 _ => panic!("Only 1D, 2D or 3D texture can be attached into the depth slot"),
             }
         })
+    }
+
+    pub fn check_status(&self) -> FramebufferStatus {
+        let value = unsafe { gl::CheckFramebufferStatus(gl::DRAW_FRAMEBUFFER) };
+        FramebufferStatus::from_u32(value).unwrap()
+    }
+
+    pub fn assert_complete(&self) -> anyhow::Result<()> {
+        match self.check_status() {
+            FramebufferStatus::Complete => Ok(()),
+            status => anyhow::bail!("Framebuffer not valid: {:?}", status),
+        }
     }
 }
 

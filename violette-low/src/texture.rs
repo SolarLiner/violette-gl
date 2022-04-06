@@ -1,7 +1,8 @@
 use std::ops::{Deref, DerefMut};
 use std::{marker::PhantomData, num::NonZeroU32};
 
-use bytemuck::{try_cast_box, Pod};
+use anyhow::Context;
+use bytemuck::Pod;
 use duplicate::duplicate;
 use gl::types::GLenum;
 use num_derive::FromPrimitive;
@@ -141,8 +142,8 @@ pub struct DepthStencil<F, S>(PhantomData<(F, S)>);
 impl TextureFormat for DepthStencil<f32, ()> {
     type Subpixel = f32;
     const COUNT: usize = 1;
-    const FORMAT: GLenum = gl::DEPTH_COMPONENT32;
-    const INTERNAL_FORMAT: GLenum = gl::DEPTH;
+    const FORMAT: GLenum = gl::DEPTH_COMPONENT;
+    const INTERNAL_FORMAT: GLenum = gl::DEPTH_COMPONENT;
     const NORMALIZED: bool = false;
 }
 
@@ -185,6 +186,18 @@ pub enum Dimension {
     D2 = gl::TEXTURE_2D,
     D2Array = gl::TEXTURE_2D_ARRAY,
     D3 = gl::TEXTURE_3D,
+}
+
+impl Dimension {
+    pub fn num_dimension(&self) -> u8 {
+        match self {
+            Self::D1 => 1,
+            Self::D2 => 2,
+            Self::D3 => 3,
+            Self::D1Array => 11,
+            Self::D2Array => 12,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -324,58 +337,6 @@ impl<F> Texture<F> {
         }
     }
 
-    pub fn wrap_s(&mut self, wrap: TextureWrap) -> anyhow::Result<()> {
-        gl_error_guard(|| unsafe {
-            gl::TexParameteri(self.id.target.gl_target(), gl::TEXTURE_WRAP_S, wrap as _);
-        })
-    }
-
-    pub fn wrap_t(&mut self, wrap: TextureWrap) -> anyhow::Result<()> {
-        gl_error_guard(|| unsafe {
-            gl::TexParameteri(self.id.target.gl_target(), gl::TEXTURE_WRAP_T, wrap as _);
-        })
-    }
-
-    pub fn wrap_r(&mut self, wrap: TextureWrap) -> anyhow::Result<()> {
-        gl_error_guard(|| unsafe {
-            gl::TexParameteri(self.id.target.gl_target(), gl::TEXTURE_WRAP_R, wrap as _);
-        })
-    }
-
-    pub fn filter_min(&mut self, texture: SampleMode, mipmap: SampleMode) -> anyhow::Result<()> {
-        use SampleMode::*;
-        let param = match (texture, mipmap) {
-            (Linear, Linear) => gl::LINEAR_MIPMAP_LINEAR,
-            (Nearest, Nearest) => gl::NEAREST_MIPMAP_NEAREST,
-            (Nearest, Linear) => gl::NEAREST_MIPMAP_LINEAR,
-            (Linear, Nearest) => gl::LINEAR_MIPMAP_NEAREST,
-        };
-        gl_error_guard(|| unsafe {
-            gl::TexParameteri(
-                self.id.target.gl_target(),
-                gl::TEXTURE_MIN_FILTER,
-                param as _,
-            )
-        })
-    }
-
-    pub fn filter_mag(&mut self, texture: SampleMode, mipmap: SampleMode) -> anyhow::Result<()> {
-        use SampleMode::*;
-        let param = match (texture, mipmap) {
-            (Linear, Linear) => gl::LINEAR_MIPMAP_LINEAR,
-            (Nearest, Nearest) => gl::NEAREST_MIPMAP_NEAREST,
-            (Nearest, Linear) => gl::NEAREST_MIPMAP_LINEAR,
-            (Linear, Nearest) => gl::LINEAR_MIPMAP_NEAREST,
-        };
-        gl_error_guard(|| unsafe {
-            gl::TexParameteri(
-                self.id.target.gl_target(),
-                gl::TEXTURE_MAG_FILTER,
-                param as _,
-            )
-        })
-    }
-
     pub fn set_texture_unit(&mut self, TextureUnit(off): TextureUnit) {
         self.unit.replace(gl::TEXTURE0 + off);
     }
@@ -429,7 +390,7 @@ impl<F: TextureFormat> Texture<F> {
 }
 
 pub struct BoundTexture<'a, F> {
-    texture: &'a Texture<F>,
+    texture: &'a mut Texture<F>,
 }
 
 impl<'a, F> std::ops::Deref for BoundTexture<'a, F> {
@@ -454,6 +415,35 @@ impl<'a, F> Binding<'a> for BoundTexture<'a, F> {
 }
 
 impl<'a, F: TextureFormat> BoundTexture<'a, F> {
+    // TODO: Support Non-2D textures
+    #[tracing::instrument(skip_all)]
+    pub fn reserve_memory(&mut self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.id.target.dim == Dimension::D2,
+            "Non-2D texture not supported at the moment"
+        );
+        tracing::trace!(
+            "glTexImage2D(<target for dimension {:?}>, 0, <INTERNAL_FORMAT {:x}>, {}, {}, 0, ..., NULL)",
+            self.id.target.dim,
+            F::INTERNAL_FORMAT,
+            self.width,
+            self.height
+        );
+        gl_error_guard(|| unsafe {
+            gl::TexImage2D(
+                self.id.target.gl_target(),
+                0,
+                F::INTERNAL_FORMAT as _,
+                self.width as _,
+                self.height as _,
+                0,
+                F::FORMAT,
+                F::Subpixel::GL_TYPE,
+                std::ptr::null(),
+            )
+        })
+    }
+
     pub fn set_data(&mut self, data: &[F::Subpixel]) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.texture.width * self.texture.height * self.texture.depth * F::COUNT as u32
@@ -494,6 +484,73 @@ impl<'a, F: TextureFormat> BoundTexture<'a, F> {
     pub fn generate_mipmaps(&mut self) -> anyhow::Result<()> {
         gl_error_guard(|| unsafe {
             gl::GenerateMipmap(self.id.target.gl_target());
+        })
+    }
+
+    pub fn clear_resize(&mut self, width: u32, height: u32, depth: u32) -> anyhow::Result<()> {
+        self.texture.width = width;
+        self.texture.height = height;
+        self.texture.depth = depth;
+        self.reserve_memory().context("Failed to reserve memory following clear")?;
+        self.generate_mipmaps()
+    }
+
+    pub fn wrap_s(&mut self, wrap: TextureWrap) -> anyhow::Result<()> {
+        gl_error_guard(|| unsafe {
+            gl::TexParameteri(self.id.target.gl_target(), gl::TEXTURE_WRAP_S, wrap as _);
+        })
+    }
+
+    pub fn wrap_t(&mut self, wrap: TextureWrap) -> anyhow::Result<()> {
+        gl_error_guard(|| unsafe {
+            gl::TexParameteri(self.id.target.gl_target(), gl::TEXTURE_WRAP_T, wrap as _);
+        })
+    }
+
+    pub fn wrap_r(&mut self, wrap: TextureWrap) -> anyhow::Result<()> {
+        gl_error_guard(|| unsafe {
+            gl::TexParameteri(self.id.target.gl_target(), gl::TEXTURE_WRAP_R, wrap as _);
+        })
+    }
+
+    pub fn filter_min(&mut self, param: SampleMode) -> anyhow::Result<()> {
+        gl_error_guard(|| unsafe {
+            gl::TexParameteri(
+                self.id.target.gl_target(),
+                gl::TEXTURE_MIN_FILTER,
+                param as _,
+            );
+        })
+    }
+
+    pub fn filter_min_mipmap(
+        &mut self,
+        mipmap: SampleMode,
+        texture: SampleMode,
+    ) -> anyhow::Result<()> {
+        use SampleMode::*;
+        let param = match (mipmap, texture) {
+            (Linear, Linear) => gl::LINEAR_MIPMAP_LINEAR,
+            (Nearest, Nearest) => gl::NEAREST_MIPMAP_NEAREST,
+            (Nearest, Linear) => gl::NEAREST_MIPMAP_LINEAR,
+            (Linear, Nearest) => gl::LINEAR_MIPMAP_NEAREST,
+        };
+        gl_error_guard(|| unsafe {
+            gl::TexParameteri(
+                self.id.target.gl_target(),
+                gl::TEXTURE_MIN_FILTER,
+                param as _,
+            )
+        })
+    }
+
+    pub fn filter_mag(&mut self, mode: SampleMode) -> anyhow::Result<()> {
+        gl_error_guard(|| unsafe {
+            gl::TexParameteri(
+                self.id.target.gl_target(),
+                gl::TEXTURE_MAG_FILTER,
+                mode as _,
+            )
         })
     }
 }

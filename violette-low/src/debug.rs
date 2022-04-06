@@ -47,7 +47,7 @@ pub struct GlDebugData {
     pub severity: CallbackSeverity,
 }
 
-type UserCallback = Box<dyn FnMut(GlDebugData)>;
+type UserCallback = Box<dyn Fn(GlDebugData)>;
 
 static mut USER_CALLBACK: RefCell<Option<UserCallback>> = RefCell::new(None);
 
@@ -58,15 +58,16 @@ extern "system" fn message_callback(
     severity: GLenum,
     length: GLsizei,
     message: *const GLchar,
-    user_param: *mut c_void,
+    _user_param: *mut c_void,
 ) {
     if let Some(user_callback) = unsafe { USER_CALLBACK.get_mut().as_mut() } {
         let data = GlDebugData {
             source: CallbackSource::from_u32(source).unwrap(),
             r#type: CallbackType::from_u32(r#type).unwrap(),
             message: {
-                let buf =
-                    bytemuck::cast_slice(unsafe { std::slice::from_raw_parts(message, length as _) });
+                let buf = bytemuck::cast_slice(unsafe {
+                    std::slice::from_raw_parts(message, length as _)
+                });
                 String::from_utf8_lossy(buf).to_string()
             },
             id,
