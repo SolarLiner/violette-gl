@@ -89,6 +89,7 @@ pub enum DepthTestFunction {
 #[derive(Debug, Copy, Clone)]
 pub enum FramebufferFeature {
     DepthTest(DepthTestFunction),
+    Blending(Blend, Blend),
 }
 
 impl FramebufferFeature {
@@ -98,12 +99,17 @@ impl FramebufferFeature {
                 gl::Enable(gl::DEPTH_TEST);
                 gl::DepthFunc(func as _)
             }
+            &Self::Blending(source, target) => {
+                gl::Enable(gl::BLEND);
+                gl::BlendFunc(source as _, target as _);
+            }
         }
     }
 
     unsafe fn disable(&self) {
         gl::Disable(match self {
             Self::DepthTest(_) => gl::DEPTH_TEST,
+            Self::Blending(..) => gl::BLEND,
         })
     }
 }
@@ -246,10 +252,6 @@ impl<'a> BoundFB<'a> {
         gl_error_guard(|| unsafe {
             feature.disable();
         })
-    }
-
-    pub fn set_blending(&mut self, blend_source: Blend, blend_dest: Blend) -> anyhow::Result<()> {
-        gl_error_guard(|| unsafe { gl::BlendFunc(blend_source as _, blend_dest as _) })
     }
 
     pub fn draw(

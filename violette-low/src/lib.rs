@@ -2,6 +2,9 @@ use std::ffi::c_void;
 
 pub use crevice::glsl;
 pub use crevice::std140;
+use num_derive::FromPrimitive;
+use num_traits::FromPrimitive;
+use utils::gl_error_guard;
 
 pub mod base;
 pub mod buffer;
@@ -47,4 +50,36 @@ pub fn point_size() -> f32 {
 
 pub fn set_point_size(size: f32) {
     unsafe { gl::PointSize(size) }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive)]
+#[repr(u32)]
+pub enum Cull {
+    Front = gl::FRONT,
+    Back = gl::BACK,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive)]
+#[repr(u32)]
+pub enum FrontFace {
+    Clockwise = gl::CW,
+    CounterClockwise = gl::CCW,
+}
+
+pub fn culling(mode: impl Into<Option<Cull>>) {
+    gl_error_guard(|| match mode.into() {
+        Some(mode) => unsafe {
+            gl::Enable(gl::CULL_FACE);
+            gl::CullFace(mode as _);
+        },
+        None => unsafe {
+            gl::CullFace(gl::FRONT_AND_BACK);
+            gl::Disable(gl::CULL_FACE);
+        },
+    })
+    .unwrap();
+}
+
+pub fn set_front_face(front_face: FrontFace) {
+    gl_error_guard(|| unsafe { gl::FrontFace(front_face as _) }).unwrap();
 }
