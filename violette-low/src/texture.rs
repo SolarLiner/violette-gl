@@ -1,10 +1,12 @@
 use std::ops::{Deref, DerefMut};
+use std::path::Path;
 use std::{marker::PhantomData, num::NonZeroU32};
 
 use anyhow::Context;
 use bytemuck::Pod;
 use duplicate::duplicate;
 use gl::types::GLenum;
+
 use num_derive::FromPrimitive;
 
 use crate::program::Uniform;
@@ -62,13 +64,13 @@ impl TextureFormat for [rust_t; 2] {
 
 #[duplicate(
     rust_t      internal_format     format;
-    [u8]        [gl::RGB8]           [gl::RGB];
-    [i8]        [gl::RGB8I]          [gl::RGB_INTEGER];
-    [u16]       [gl::RGB16]          [gl::RGB];
-    [i16]       [gl::RGB16I]         [gl::RGB_INTEGER];
-    [u32]       [gl::RGB32UI]        [gl::RGB];
-    [i32]       [gl::RGB32I]         [gl::RGB_INTEGER];
-    [f32]       [gl::RGB32F]         [gl::RGB];
+    [u8]        [gl::RGB8]          [gl::RGB];
+    [i8]        [gl::RGB8I]         [gl::RGB_INTEGER];
+    [u16]       [gl::RGB16]         [gl::RGB];
+    [i16]       [gl::RGB16I]        [gl::RGB_INTEGER];
+    [u32]       [gl::RGB32UI]       [gl::RGB];
+    [i32]       [gl::RGB32I]        [gl::RGB_INTEGER];
+    [f32]       [gl::RGB32F]        [gl::RGB];
 )]
 impl TextureFormat for [rust_t; 3] {
     type Subpixel = rust_t;
@@ -79,7 +81,7 @@ impl TextureFormat for [rust_t; 3] {
 }
 
 #[duplicate(
-    rust_t      internal_format     format;
+    rust_t      internal_format       format;
     [u8]        [gl::RGBA8]           [gl::RGBA];
     [i8]        [gl::RGBA8I]          [gl::RGBA_INTEGER];
     [u16]       [gl::RGBA16]          [gl::RGBA];
@@ -107,6 +109,11 @@ impl<F: TextureFormat> AsTextureFormat for F {
 #[cfg(feature = "img")]
 impl<F: TextureFormat> AsTextureFormat for image::Luma<F> {
     type TextureFormat = F;
+}
+
+#[cfg(feature = "img")]
+impl<F> AsTextureFormat for image::LumaA<F> where [F; 2]: TextureFormat {
+    type TextureFormat = [F; 2];
 }
 
 #[cfg(feature = "img")]
@@ -389,6 +396,36 @@ impl<F: TextureFormat> Texture<F> {
     }
 }
 
+#[cfg(feature = "img")]
+impl Texture<[f32; 4]> {
+    pub fn load_rgba32f<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
+        let path_repr = path.as_ref().display().to_string();
+        tracing::info!("Loading {}", path_repr);
+        let img = image::open(path).context("Cannot load image from {}")?;
+        Self::from_image(img.to_rgba32f())
+    }
+}
+
+#[cfg(feature = "img")]
+impl Texture<[f32; 3]> {
+    pub fn load_rgb32f<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
+        let path_repr = path.as_ref().display().to_string();
+        tracing::info!("Loading {}", path_repr);
+        let img = image::open(path).context("Cannot load image from {}")?;
+        Self::from_image(img.to_rgb32f())
+    }
+}
+
+#[cfg(feature = "img")]
+impl Texture<[f32; 2]> {
+    pub fn load_rg32f<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
+        let path_repr = path.as_ref().display().to_string();
+        tracing::info!("Loading {}", path_repr);
+        let img = image::open(path).context("Cannot load image from {}")?;
+        Self::from_image(img.to_luma_alpha32f())
+    }
+}
+
 pub struct BoundTexture<'a, F> {
     texture: &'a mut Texture<F>,
 }
@@ -491,7 +528,8 @@ impl<'a, F: TextureFormat> BoundTexture<'a, F> {
         self.texture.width = width;
         self.texture.height = height;
         self.texture.depth = depth;
-        self.reserve_memory().context("Failed to reserve memory following clear")?;
+        self.reserve_memory()
+            .context("Failed to reserve memory following clear")?;
         self.generate_mipmaps()
     }
 
