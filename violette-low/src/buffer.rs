@@ -1,3 +1,4 @@
+use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::{
     marker::PhantomData,
@@ -7,6 +8,7 @@ use std::{
 
 use bitflags::bitflags;
 use bytemuck::{cast_slice, Pod};
+use crevice::std140::AsStd140;
 use gl::types::{GLbitfield, GLintptr, GLsizeiptr, GLuint};
 use num_derive::FromPrimitive;
 
@@ -191,6 +193,25 @@ pub struct BoundBuffer<'a, T> {
     buffer: &'a mut Buffer<T>,
 }
 
+impl<'a, T> BoundBuffer<'a, T> {
+    fn byte_slice(&self, sizeof: usize, range: impl RangeBounds<usize>) -> Range<usize> {
+        tracing::debug!(range.start = ?range.start_bound(), range.end = ?range.end_bound());
+        let uniform_align = gl_alignment();
+        let alignment = next_multiple(sizeof, uniform_align);
+        let start = match range.start_bound() {
+            Bound::Included(i) => *i,
+            Bound::Excluded(i) => (i + 1),
+            Bound::Unbounded => 0,
+        } * alignment;
+        let end = match range.end_bound() {
+            Bound::Included(i) => (i + 1),
+            Bound::Excluded(i) => *i,
+            Bound::Unbounded => self.count * std::mem::size_of::<T>(),
+        } * alignment;
+        start..end
+    }
+}
+
 impl<'a, T> std::ops::Deref for BoundBuffer<'a, T> {
     type Target = Buffer<T>;
 
@@ -223,7 +244,22 @@ impl<'a, T: 'a> Binding<'a> for BoundBuffer<'a, T> {
 impl<'a, T: Pod> BoundBuffer<'a, T> {
     /// Sets GPU data.
     pub fn set(&mut self, data: &[T], usage_hint: BufferUsageHint) -> anyhow::Result<()> {
-        let bytes = bytemuck::cast_slice::<_, u8>(data);
+        let bytes = if self.buffer.kind() == BufferKind::Uniform {
+            let alignment = next_multiple(std::mem::size_of::<T>(), gl_alignment());
+            data.iter()
+                .map(|x| {
+                    let bytes = bytemuck::bytes_of(x);
+                    let padding = alignment - bytes.len();
+                    bytes
+                        .iter()
+                        .copied()
+                        .chain(std::iter::repeat(0).take(padding))
+                })
+                .flatten()
+                .collect::<Vec<_>>()
+        } else {
+            bytemuck::cast_slice(data).to_owned()
+        };
         self.buffer.count = data.len();
         tracing::trace!(
             "glBufferData({:?}, {}, <bytes ptr>, {:?})",
@@ -243,7 +279,7 @@ impl<'a, T: Pod> BoundBuffer<'a, T> {
     }
 
     pub fn slice(&self, range: impl RangeBounds<usize>) -> BufferSlice<'a, '_, T> {
-        let range = self.byte_slice(range);
+        let range = self.byte_slice(std::mem::size_of::<T>(), range);
         let offset = range.start as _;
         let size = (range.end - range.start) as _;
         tracing::debug!(?range, %size, %offset);
@@ -255,7 +291,7 @@ impl<'a, T: Pod> BoundBuffer<'a, T> {
     }
 
     pub fn slice_mut(&mut self, range: impl RangeBounds<usize>) -> BufferSliceMut<'a, '_, T> {
-        let range = self.byte_slice(range);
+        let range = self.byte_slice(std::mem::size_of::<T>(), range);
         let offset = range.start as _;
         let size = (range.end - range.start) as _;
         BufferSliceMut {
@@ -263,21 +299,6 @@ impl<'a, T: Pod> BoundBuffer<'a, T> {
             offset,
             size,
         }
-    }
-
-    fn byte_slice(&self, range: impl RangeBounds<usize>) -> Range<usize> {
-        tracing::debug!(range.start = ?range.start_bound(), range.end = ?range.end_bound());
-        let start = match range.start_bound() {
-            Bound::Included(i) => *i,
-            Bound::Excluded(i) => (i + 1),
-            Bound::Unbounded => 0,
-        } * std::mem::size_of::<T>();
-        let end = match range.end_bound() {
-            Bound::Included(i) => (i + 1),
-            Bound::Excluded(i) => *i,
-            Bound::Unbounded => self.count * std::mem::size_of::<T>(),
-        } * std::mem::size_of::<T>();
-        start..end
     }
 }
 
@@ -287,11 +308,16 @@ pub struct BufferSlice<'a, 'b, T> {
     pub(crate) size: GLsizeiptr,
 }
 
-impl<'a, 'b , T: bytemuck::Pod> BufferSlice<'a, 'b, T> {
+impl<'a, 'b, T: bytemuck::Pod> BufferSlice<'a, 'b, T> {
     pub fn read(&self, access: BufferAccess) -> anyhow::Result<MappedBufferData<T>> {
         let bytes = gl_error_guard(|| unsafe {
             let access = access & !BufferAccess::MAP_WRITE;
-            let ptr = gl::MapBufferRange(self.bound_buffer.buffer.kind() as _, self.offset, self.size, access.bits);
+            let ptr = gl::MapBufferRange(
+                self.bound_buffer.buffer.kind() as _,
+                self.offset,
+                self.size,
+                access.bits,
+            );
             std::slice::from_raw_parts(ptr as *const u8, self.size as _)
         })?;
         Ok(MappedBufferData {
@@ -310,11 +336,19 @@ pub struct BufferSliceMut<'a, 'b, T> {
 
 impl<'a, 'b, T: bytemuck::Pod> BufferSliceMut<'a, 'b, T> {
     pub fn write(&mut self, data: &[T], access: BufferAccess) -> anyhow::Result<()> {
-        anyhow::ensure!(data.len() * std::mem::size_of::<T>() == self.size as _, "Slice length need to equal mapped slice length");
+        anyhow::ensure!(
+            data.len() * std::mem::size_of::<T>() == self.size as _,
+            "Slice length need to equal mapped slice length"
+        );
         let bytes = bytemuck::cast_slice(data);
         gl_error_guard(|| unsafe {
             let access = access | BufferAccess::MAP_READ | BufferAccess::MAP_WRITE;
-            let ptr = gl::MapBufferRange(self.bound_buffer.kind() as _, self.offset, self.size, access.bits);
+            let ptr = gl::MapBufferRange(
+                self.bound_buffer.kind() as _,
+                self.offset,
+                self.size,
+                access.bits,
+            );
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, self.size as _);
             gl::UnmapBuffer(self.bound_buffer.id.get());
         })
@@ -343,4 +377,43 @@ impl<'m, 'b, T> Drop for MappedBufferData<'m, 'b, T> {
             gl::UnmapBuffer(self.id.kind as _);
         }
     }
+}
+
+#[cfg(not(feature = "fast"))]
+#[tracing::instrument]
+fn gl_alignment() -> NonZeroUsize {
+    NonZeroUsize::new(
+        gl_error_guard(|| unsafe {
+            let mut val = 0;
+            gl::GetIntegerv(gl::UNIFORM_BUFFER_OFFSET_ALIGNMENT, &mut val);
+            tracing::trace!(
+                "glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, <inout val={}>)",
+                val
+            );
+            val as usize
+        })
+        .unwrap(),
+    )
+    .unwrap()
+}
+
+#[cfg(feature = "fast")]
+#[tracing::instrument]
+fn gl_alignment() -> NonZeroUsize {
+    unsafe {
+        let mut val = 0;
+        gl::GetIntegerv(gl::UNIFORM_BUFFER_OFFSET_ALIGNMENT, &mut val);
+        tracing::trace!(
+            "glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, <inout val={}>)",
+            val
+        );
+        NonZeroUsize::new_unchecked(val as _)
+    }
+}
+
+#[inline(always)]
+fn next_multiple(x: usize, of: NonZeroUsize) -> usize {
+    let rem = x % of.get();
+    let offset = of.get() - rem;
+    x + offset
 }

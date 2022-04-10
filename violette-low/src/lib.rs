@@ -1,7 +1,5 @@
 use std::ffi::c_void;
 
-pub use crevice::glsl;
-pub use crevice::std140;
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 use utils::gl_error_guard;
