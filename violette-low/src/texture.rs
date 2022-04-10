@@ -6,6 +6,7 @@ use anyhow::Context;
 use bytemuck::Pod;
 use duplicate::duplicate;
 use gl::types::GLenum;
+use image::GenericImageView;
 
 use num_derive::FromPrimitive;
 
@@ -421,8 +422,12 @@ impl Texture<[f32; 2]> {
     pub fn load_rg32f<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
         let path_repr = path.as_ref().display().to_string();
         tracing::info!("Loading {}", path_repr);
-        let img = image::open(path).context("Cannot load image from {}")?;
-        Self::from_image(img.to_luma_alpha32f())
+        let img = image::open(path).context("Cannot load image from {}")?.into_rgb32f();
+        let data = img.pixels().map(|px| {
+            let [r,g,_] = px.0;
+            [r,g]
+        }).flatten().collect::<Vec<_>>();
+        Self::from_2d_pixels(img.width() as usize, &data).context("Cannot upload texture")
     }
 }
 
