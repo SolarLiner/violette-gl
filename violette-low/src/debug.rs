@@ -78,9 +78,13 @@ extern "system" fn message_callback(
 }
 
 pub fn set_message_callback<F: 'static + Fn(GlDebugData)>(cb: F) {
-    unsafe {
-        USER_CALLBACK.get_mut().replace(Box::new(cb));
-        gl::Enable(gl::DEBUG_OUTPUT);
-        gl::DebugMessageCallback(Some(message_callback), std::ptr::null_mut());
+    if !gl::DebugMessageCallback::is_loaded() {
+        tracing::warn!("glDebugMessageCallback is not available, cannot set debug callback");
+    } else {
+        unsafe {
+            USER_CALLBACK.get_mut().replace(Box::new(cb));
+            gl::Enable(gl::DEBUG_OUTPUT);
+            gl::DebugMessageCallback(Some(message_callback), std::ptr::null_mut());
+        }
     }
 }
