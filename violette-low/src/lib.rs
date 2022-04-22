@@ -2,6 +2,7 @@ use std::ffi::c_void;
 
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
+
 use utils::gl_error_guard;
 
 pub mod base;

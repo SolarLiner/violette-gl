@@ -6,8 +6,6 @@ use anyhow::Context;
 use bytemuck::Pod;
 use duplicate::duplicate;
 use gl::types::GLenum;
-use image::GenericImageView;
-
 use num_derive::FromPrimitive;
 
 use crate::program::Uniform;
@@ -28,14 +26,14 @@ pub trait TextureFormat {
 }
 
 #[duplicate(
-    rust_t      internal_format     format;
-    [u8]        [gl::R8]            [gl::RED];
-    [i8]        [gl::R8I]           [gl::RED_INTEGER];
-    [u16]       [gl::R16]           [gl::RED];
-    [i16]       [gl::R16I]          [gl::RED_INTEGER];
-    [u32]       [gl::R32UI]         [gl::RED];
-    [i32]       [gl::R32I]          [gl::RED_INTEGER];
-    [f32]       [gl::R32F]          [gl::RED];
+rust_t      internal_format     format;
+[u8]        [gl::R8]            [gl::RED];
+[i8]        [gl::R8I]           [gl::RED_INTEGER];
+[u16]       [gl::R16]           [gl::RED];
+[i16]       [gl::R16I]          [gl::RED_INTEGER];
+[u32]       [gl::R32UI]         [gl::RED];
+[i32]       [gl::R32I]          [gl::RED_INTEGER];
+[f32]       [gl::R32F]          [gl::RED];
 )]
 impl TextureFormat for rust_t {
     type Subpixel = Self;
@@ -46,14 +44,14 @@ impl TextureFormat for rust_t {
 }
 
 #[duplicate(
-    rust_t      internal_format     format;
-    [u8]        [gl::RG8]           [gl::RG];
-    [i8]        [gl::RG8I]          [gl::RG_INTEGER];
-    [u16]       [gl::RG16]          [gl::RG];
-    [i16]       [gl::RG16I]         [gl::RG_INTEGER];
-    [u32]       [gl::RG32UI]        [gl::RG];
-    [i32]       [gl::RG32I]         [gl::RG_INTEGER];
-    [f32]       [gl::RG32F]         [gl::RG];
+rust_t      internal_format     format;
+[u8]        [gl::RG8]           [gl::RG];
+[i8]        [gl::RG8I]          [gl::RG_INTEGER];
+[u16]       [gl::RG16]          [gl::RG];
+[i16]       [gl::RG16I]         [gl::RG_INTEGER];
+[u32]       [gl::RG32UI]        [gl::RG];
+[i32]       [gl::RG32I]         [gl::RG_INTEGER];
+[f32]       [gl::RG32F]         [gl::RG];
 )]
 impl TextureFormat for [rust_t; 2] {
     type Subpixel = rust_t;
@@ -64,14 +62,14 @@ impl TextureFormat for [rust_t; 2] {
 }
 
 #[duplicate(
-    rust_t      internal_format     format;
-    [u8]        [gl::RGB8]          [gl::RGB];
-    [i8]        [gl::RGB8I]         [gl::RGB_INTEGER];
-    [u16]       [gl::RGB16]         [gl::RGB];
-    [i16]       [gl::RGB16I]        [gl::RGB_INTEGER];
-    [u32]       [gl::RGB32UI]       [gl::RGB];
-    [i32]       [gl::RGB32I]        [gl::RGB_INTEGER];
-    [f32]       [gl::RGB32F]        [gl::RGB];
+rust_t      internal_format     format;
+[u8]        [gl::RGB8]          [gl::RGB];
+[i8]        [gl::RGB8I]         [gl::RGB_INTEGER];
+[u16]       [gl::RGB16]         [gl::RGB];
+[i16]       [gl::RGB16I]        [gl::RGB_INTEGER];
+[u32]       [gl::RGB32UI]       [gl::RGB];
+[i32]       [gl::RGB32I]        [gl::RGB_INTEGER];
+[f32]       [gl::RGB32F]        [gl::RGB];
 )]
 impl TextureFormat for [rust_t; 3] {
     type Subpixel = rust_t;
@@ -82,14 +80,14 @@ impl TextureFormat for [rust_t; 3] {
 }
 
 #[duplicate(
-    rust_t      internal_format       format;
-    [u8]        [gl::RGBA8]           [gl::RGBA];
-    [i8]        [gl::RGBA8I]          [gl::RGBA_INTEGER];
-    [u16]       [gl::RGBA16]          [gl::RGBA];
-    [i16]       [gl::RGBA16I]         [gl::RGBA_INTEGER];
-    [u32]       [gl::RGBA32UI]        [gl::RGBA];
-    [i32]       [gl::RGBA32I]         [gl::RGBA_INTEGER];
-    [f32]       [gl::RGBA32F]         [gl::RGBA];
+rust_t      internal_format       format;
+[u8]        [gl::RGBA8]           [gl::RGBA];
+[i8]        [gl::RGBA8I]          [gl::RGBA_INTEGER];
+[u16]       [gl::RGBA16]          [gl::RGBA];
+[i16]       [gl::RGBA16I]         [gl::RGBA_INTEGER];
+[u32]       [gl::RGBA32UI]        [gl::RGBA];
+[i32]       [gl::RGBA32I]         [gl::RGBA_INTEGER];
+[f32]       [gl::RGBA32F]         [gl::RGBA];
 )]
 impl TextureFormat for [rust_t; 4] {
     type Subpixel = rust_t;
@@ -113,7 +111,10 @@ impl<F: TextureFormat> AsTextureFormat for image::Luma<F> {
 }
 
 #[cfg(feature = "img")]
-impl<F> AsTextureFormat for image::LumaA<F> where [F; 2]: TextureFormat {
+impl<F> AsTextureFormat for image::LumaA<F>
+where
+    [F; 2]: TextureFormat,
+{
     type TextureFormat = [F; 2];
 }
 
@@ -219,6 +220,7 @@ impl PartialEq for TextureTarget {
         self.gl_target().eq(&other.gl_target())
     }
 }
+
 impl Eq for TextureTarget {}
 
 impl TextureTarget {
@@ -422,11 +424,17 @@ impl Texture<[f32; 2]> {
     pub fn load_rg32f<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
         let path_repr = path.as_ref().display().to_string();
         tracing::info!("Loading {}", path_repr);
-        let img = image::open(path).context("Cannot load image from {}")?.into_rgb32f();
-        let data = img.pixels().map(|px| {
-            let [r,g,_] = px.0;
-            [r,g]
-        }).flatten().collect::<Vec<_>>();
+        let img = image::open(path)
+            .context("Cannot load image from {}")?
+            .into_rgb32f();
+        let data = img
+            .pixels()
+            .map(|px| {
+                let [r, g, _] = px.0;
+                [r, g]
+            })
+            .flatten()
+            .collect::<Vec<_>>();
         Self::from_2d_pixels(img.width() as usize, &data).context("Cannot upload texture")
     }
 }

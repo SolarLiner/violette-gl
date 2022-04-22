@@ -19,11 +19,11 @@ pub trait Uniform: Sized {
 }
 
 #[duplicate(
-    gl_t            uniform;
-    [GLint]         [Uniform1i];
-    [GLuint]        [Uniform1ui];
-    [GLfloat]       [Uniform1f];
-    [GLdouble]      [Uniform1d];
+gl_t            uniform;
+[GLint]         [Uniform1i];
+[GLuint]        [Uniform1ui];
+[GLfloat]       [Uniform1f];
+[GLdouble]      [Uniform1d];
 )]
 impl Uniform for gl_t {
     unsafe fn write_uniform(&self, location: GLint) {
@@ -32,11 +32,11 @@ impl Uniform for gl_t {
 }
 
 #[duplicate(
-    gl_t        uniform;
-    [GLint]     [Uniform2i];
-    [GLuint]    [Uniform2ui];
-    [GLfloat]   [Uniform2f];
-    [GLdouble]  [Uniform2d];
+gl_t        uniform;
+[GLint]     [Uniform2i];
+[GLuint]    [Uniform2ui];
+[GLfloat]   [Uniform2f];
+[GLdouble]  [Uniform2d];
 )]
 impl Uniform for [gl_t; 2] {
     unsafe fn write_uniform(&self, location: GLint) {
@@ -46,11 +46,11 @@ impl Uniform for [gl_t; 2] {
 }
 
 #[duplicate(
-    gl_t        uniform;
-    [GLint]     [Uniform3i];
-    [GLuint]    [Uniform3ui];
-    [GLfloat]   [Uniform3f];
-    [GLdouble]  [Uniform3d];
+gl_t        uniform;
+[GLint]     [Uniform3i];
+[GLuint]    [Uniform3ui];
+[GLfloat]   [Uniform3f];
+[GLdouble]  [Uniform3d];
 )]
 impl Uniform for [gl_t; 3] {
     unsafe fn write_uniform(&self, location: GLint) {
@@ -60,11 +60,11 @@ impl Uniform for [gl_t; 3] {
 }
 
 #[duplicate(
-    gl_t        uniform;
-    [GLint]     [Uniform4i];
-    [GLuint]    [Uniform4ui];
-    [GLfloat]   [Uniform4f];
-    [GLdouble]  [Uniform4d];
+gl_t        uniform;
+[GLint]     [Uniform4i];
+[GLuint]    [Uniform4ui];
+[GLfloat]   [Uniform4f];
+[GLdouble]  [Uniform4d];
 )]
 impl Uniform for [gl_t; 4] {
     unsafe fn write_uniform(&self, location: GLint) {
@@ -74,9 +74,9 @@ impl Uniform for [gl_t; 4] {
 }
 
 #[duplicate(
-    gl_t        uniform;
-    [GLfloat]   [UniformMatrix2fv];
-    [GLdouble]  [UniformMatrix2dv];
+gl_t        uniform;
+[GLfloat]   [UniformMatrix2fv];
+[GLdouble]  [UniformMatrix2dv];
 )]
 impl Uniform for [[gl_t; 2]; 2] {
     unsafe fn write_uniform(&self, location: GLint) {
@@ -85,9 +85,9 @@ impl Uniform for [[gl_t; 2]; 2] {
 }
 
 #[duplicate(
-    gl_t        uniform;
-    [GLfloat]   [UniformMatrix3fv];
-    [GLdouble]  [UniformMatrix3dv];
+gl_t        uniform;
+[GLfloat]   [UniformMatrix3fv];
+[GLdouble]  [UniformMatrix3dv];
 )]
 impl Uniform for [[gl_t; 3]; 3] {
     unsafe fn write_uniform(&self, location: GLint) {
@@ -96,9 +96,9 @@ impl Uniform for [[gl_t; 3]; 3] {
 }
 
 #[duplicate(
-    gl_t        uniform;
-    [GLfloat]   [UniformMatrix4fv];
-    [GLdouble]  [UniformMatrix4dv];
+gl_t        uniform;
+[GLfloat]   [UniformMatrix4fv];
+[GLdouble]  [UniformMatrix4dv];
 )]
 impl Uniform for [[gl_t; 4]; 4] {
     unsafe fn write_uniform(&self, location: GLint) {
@@ -108,14 +108,14 @@ impl Uniform for [[gl_t; 4]; 4] {
 
 #[cfg(feature = "uniforms-glam")]
 #[duplicate(
-    glam_t      ;
-    [glam::Vec2];
-    [glam::DVec2];
-    [glam::Vec3];
-    [glam::Vec3A];
-    [glam::DVec3];
-    [glam::Vec4];
-    [glam::DVec4];
+glam_t;
+[glam::Vec2];
+[glam::DVec2];
+[glam::Vec3];
+[glam::Vec3A];
+[glam::DVec3];
+[glam::Vec4];
+[glam::DVec4];
 )]
 impl Uniform for glam_t {
     unsafe fn write_uniform(&self, location: GLint) {
@@ -125,13 +125,13 @@ impl Uniform for glam_t {
 
 #[cfg(feature = "uniforms-glam")]
 #[duplicate(
-    glam_t;
-    [glam::Mat2];
-    [glam::Mat3];
-    [glam::Mat4];
-    [glam::DMat2];
-    [glam::DMat3];
-    [glam::DMat4];
+glam_t;
+[glam::Mat2];
+[glam::Mat3];
+[glam::Mat4];
+[glam::DMat2];
+[glam::DMat3];
+[glam::DMat4];
 )]
 impl Uniform for glam_t {
     unsafe fn write_uniform(&self, location: GLint) {
@@ -200,6 +200,7 @@ impl std::ops::Deref for ProgramId {
 /// Unlinked program typestate. Unlinked programs can have shaders added to them. Linking an
 /// unlinked program produces a `Program<Linked>` structure.
 pub struct Unlinked;
+
 #[derive(Debug)]
 /// Linked program. A linked program can be used, and uniforms set.
 pub struct Linked;

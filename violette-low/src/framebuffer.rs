@@ -37,9 +37,9 @@ impl FramebufferId {
         Some(FramebufferId(id))
     }
 
-    fn get(&self) -> u32 {
-        self.0
-    }
+    // fn get(&self) -> u32 {
+    //     self.0
+    // }
 }
 
 bitflags! {

@@ -1,6 +1,7 @@
 use std::{
     ffi::{CStr, CString},
-    num::NonZeroU32, path::Path,
+    num::NonZeroU32,
+    path::Path,
 };
 
 use anyhow::Context;
