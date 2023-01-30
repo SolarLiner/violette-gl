@@ -3,7 +3,7 @@ use std::num::NonZeroI32;
 use std::path::Path;
 use std::{ffi::CString, marker::PhantomData, num::NonZeroU32};
 
-use duplicate::duplicate;
+use duplicate::duplicate_item as duplicate;
 use gl::types::{GLdouble, GLfloat, GLint, GLuint};
 
 use crate::base::bindable::{Binding, Resource};

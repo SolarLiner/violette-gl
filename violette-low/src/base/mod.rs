@@ -1,4 +1,4 @@
-use duplicate::duplicate;
+use duplicate::duplicate_item as duplicate;
 use gl::types::*;
 
 pub mod bindable;

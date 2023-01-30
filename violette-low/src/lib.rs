@@ -1,9 +1,14 @@
-use std::ffi::c_void;
+use std::{
+    ffi::{c_void, CStr},
+    ops::Not
+};
 
+use gl::types::GLenum;
 use num_derive::FromPrimitive;
-use num_traits::FromPrimitive;
 
 use utils::gl_error_guard;
+
+pub use gl;
 
 pub mod base;
 pub mod buffer;
@@ -14,6 +19,7 @@ pub mod shader;
 pub mod texture;
 mod utils;
 pub mod vertex;
+
 
 pub fn load_with(loader: impl FnMut(&'static str) -> *const c_void) {
     gl::load_with(loader)
@@ -49,6 +55,13 @@ pub fn point_size() -> f32 {
 
 pub fn set_point_size(size: f32) {
     unsafe { gl::PointSize(size) }
+}
+
+pub fn get_string(of: GLenum) -> Option<String> {
+    unsafe {
+        let ret = gl::GetString(of);
+        ret.is_null().not().then(|| CStr::from_ptr(ret.cast()).to_string_lossy().to_string())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive)]

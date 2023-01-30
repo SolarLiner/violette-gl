@@ -1,10 +1,13 @@
-use std::ops::{Deref, DerefMut};
-use std::path::Path;
-use std::{marker::PhantomData, num::NonZeroU32};
+use std::{
+    ops::{Deref, DerefMut},
+    path::Path,
+    marker::PhantomData,
+    num::NonZeroU32
+};
 
 use anyhow::Context;
 use bytemuck::Pod;
-use duplicate::duplicate;
+use duplicate::duplicate_item as duplicate;
 use gl::types::GLenum;
 use num_derive::FromPrimitive;
 

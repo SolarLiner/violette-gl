@@ -8,7 +8,6 @@ use std::{
 
 use bitflags::bitflags;
 use bytemuck::{cast_slice, Pod};
-use crevice::std140::AsStd140;
 use gl::types::{GLbitfield, GLintptr, GLsizeiptr, GLuint};
 use num_derive::FromPrimitive;
 
