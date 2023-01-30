@@ -145,6 +145,7 @@ impl<'a, T: 'a> Resource<'a> for Buffer<T> {
 
 impl<T> Buffer<T> {
     pub fn new(kind: BufferKind) -> Self {
+        assert!(std::mem::size_of::<T>() > 0, "Cannot allocate buffers for zero-sized types");
         let id = unsafe {
             let mut id = 0;
             gl::GenBuffers(1, &mut id);
@@ -155,6 +156,10 @@ impl<T> Buffer<T> {
             id: BufferId::new(id, kind).unwrap(),
             count: 0,
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
     }
 
     pub fn len(&self) -> usize {
@@ -168,6 +173,7 @@ impl<T> Buffer<T> {
 
 impl<T: Pod> Buffer<T> {
     pub fn with_data(kind: BufferKind, data: &[T]) -> anyhow::Result<Self> {
+        assert!(std::mem::size_of::<T>() > 0, "Cannot allocate buffers for zero-sized types");
         let mut this = Self::new(kind);
         this.with_binding(|binding| {
             binding.set(data, BufferUsageHint::Static)?;
@@ -246,7 +252,7 @@ impl<'a, T: Pod> BoundBuffer<'a, T> {
         let bytes = if self.buffer.kind() == BufferKind::Uniform {
             let alignment = next_multiple(std::mem::size_of::<T>(), gl_alignment());
             data.iter()
-                .map(|x| {
+                .flat_map(|x| {
                     let bytes = bytemuck::bytes_of(x);
                     let padding = alignment - bytes.len();
                     bytes
@@ -254,7 +260,6 @@ impl<'a, T: Pod> BoundBuffer<'a, T> {
                         .copied()
                         .chain(std::iter::repeat(0).take(padding))
                 })
-                .flatten()
                 .collect::<Vec<_>>()
         } else {
             bytemuck::cast_slice(data).to_owned()
