@@ -3,6 +3,7 @@ use std::num::NonZeroI32;
 use std::path::Path;
 use std::{ffi::CString, marker::PhantomData, num::NonZeroU32};
 
+use anyhow::Context;
 use duplicate::duplicate_item as duplicate;
 use gl::types::{GLdouble, GLfloat, GLint, GLuint};
 
@@ -247,6 +248,7 @@ impl<Status: Debug> Program<Status> {
     }
 }
 
+#[allow(clippy::new_without_default)]
 impl Program<Unlinked> {
     /// Create a new, empty program.
     pub fn new() -> Self {
@@ -336,14 +338,14 @@ impl Program<Linked> {
         fragment_shader: impl Into<Option<&'fs str>>,
         geometry_shader: impl Into<Option<&'gs str>>,
     ) -> anyhow::Result<Self> {
-        let vertex = Shader::new(crate::shader::ShaderStage::Vertex, vertex_shader)?;
+        let vertex = Shader::new(crate::shader::ShaderStage::Vertex, vertex_shader).context("Cannot parse vertex shader")?;
         let fragment = if let Some(source) = fragment_shader.into() {
-            Some(Shader::new(crate::shader::ShaderStage::Fragment, source)?)
+            Some(Shader::new(crate::shader::ShaderStage::Fragment, source).context("Cannot parse fragment shader")?)
         } else {
             None
         };
         let geometry = if let Some(source) = geometry_shader.into() {
-            Some(Shader::new(crate::shader::ShaderStage::Geometry, source)?)
+            Some(Shader::new(crate::shader::ShaderStage::Geometry, source).context("Cannot parse geometry shader")?)
         } else {
             None
         };

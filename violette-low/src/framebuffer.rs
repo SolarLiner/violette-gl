@@ -94,12 +94,12 @@ pub enum FramebufferFeature {
 
 impl FramebufferFeature {
     unsafe fn enable(&self) {
-        match self {
-            &Self::DepthTest(func) => {
+        match *self {
+            Self::DepthTest(func) => {
                 gl::Enable(gl::DEPTH_TEST);
                 gl::DepthFunc(func as _)
             }
-            &Self::Blending(source, target) => {
+            Self::Blending(source, target) => {
                 gl::Enable(gl::BLEND);
                 gl::BlendFunc(source as _, target as _);
             }
@@ -183,9 +183,7 @@ impl<'a> Resource<'a> for Framebuffer {
         Some(FramebufferId(id as _))
     }
 
-    fn kind(&self) -> Self::Kind {
-        ()
-    }
+    fn kind(&self) -> Self::Kind {}
 
     fn make_binding(&'a mut self) -> anyhow::Result<Self::Bound> {
         if Self::current(()) != Some(self.id) {
