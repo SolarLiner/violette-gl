@@ -3,7 +3,7 @@ use std::{
     ops::Not,
 };
 
-use anyhow::Context;
+use anyhow::ContextCompat;
 use gl::types::GLenum;
 use num_derive::FromPrimitive;
 

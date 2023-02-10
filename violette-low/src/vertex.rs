@@ -91,6 +91,7 @@ impl<'a> Resource<'a> for VertexArray {
     }
 }
 
+#[allow(clippy::new_without_default)]
 impl VertexArray {
     pub fn new() -> Self {
         let mut id = 0;

@@ -8,7 +8,7 @@ use std::{
 use anyhow::Context;
 use bytemuck::Pod;
 use duplicate::duplicate_item as duplicate;
-use gl::types::GLenum;
+use gl::types::*;
 use num_derive::FromPrimitive;
 
 use crate::{program::Uniform, base::bindable::BindGuard};
@@ -380,7 +380,11 @@ impl<F> Texture<F> {
         self.id.target.is_multisample()
     }
 
-    pub(crate) fn id(&self) -> u32 {
+    pub fn id(&self) -> TextureId {
+        self.id
+    }
+
+    pub(crate) fn raw_id(&self) -> u32 {
         self.id.get()
     }
 }
