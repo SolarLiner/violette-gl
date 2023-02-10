@@ -1,21 +1,23 @@
-use std::fmt::Debug;
-use std::num::NonZeroI32;
-use std::path::Path;
-use std::{ffi::CString, marker::PhantomData, num::NonZeroU32};
+use std::{ffi::CString, fmt::Debug, marker::PhantomData, num::NonZeroU32, path::Path};
 
 use anyhow::Context;
 use duplicate::duplicate_item as duplicate;
-use gl::types::{GLdouble, GLfloat, GLint, GLuint};
+use either::Either;
+use gl::types::{GLdouble, GLenum, GLfloat, GLint, GLuint};
 
-use crate::base::bindable::{Binding, Resource};
-use crate::buffer::{Buffer, BufferKind, BufferSlice};
-use crate::shader::Shader;
-use crate::utils::gl_error_guard;
-use crate::{shader::ShaderId, utils::gl_string};
+use crate::base::{
+    bindable::{Binding, Resource},
+    GlType,
+};
+use crate::{
+    buffer::BufferSlice,
+    shader::{Shader, ShaderId},
+    utils::{gl_error_guard, gl_string},
+};
 
 /// Trait of types that can be written into shader uniforms. This allows polymorphic use of the
 /// methods on [`ActiveProgram`](struct::ActiveProgram);
-pub trait Uniform: Sized {
+pub trait Uniform {
     unsafe fn write_uniform(&self, location: GLint);
 }
 
@@ -140,41 +142,46 @@ impl Uniform for glam_t {
     }
 }
 
-#[derive(Debug)]
-/// Structure allowing uniforms to be written into a program.
-pub struct UniformLocation<'a, Type> {
-    ty: PhantomData<&'a Type>,
-    location: u32,
-}
-
-impl<'a, Type: Uniform> UniformLocation<'a, Type> {
-    pub fn set(&self, value: Type) -> anyhow::Result<()> {
-        gl_error_guard(|| unsafe {
-            value.write_uniform(self.location as _);
-        })
+impl<L: Uniform, R: Uniform> Uniform for Either<L, R> {
+    unsafe fn write_uniform(&self, location: GLint) {
+        match self {
+            Self::Left(left) => left.write_uniform(location),
+            Self::Right(right) => right.write_uniform(location),
+        }
     }
 }
 
-pub struct UniformBlockIndex<'a, T> {
-    ty: PhantomData<&'a T>,
+impl<T: Uniform> Uniform for Option<T> {
+    unsafe fn write_uniform(&self, location: GLint) {
+        if let Some(inner) = self {
+            inner.write_uniform(location)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+/// Structure allowing uniforms to be written into a program.
+pub struct UniformLocation {
+    program: ProgramId,
+    location: u32,
+    desc: UniformDesc,
+}
+
+impl UniformLocation {
+    pub fn is_in_program(&self, program: &Program) -> bool {
+        self.program == program.id
+    }
+
+    pub fn desc(&self) -> &UniformDesc {
+        &self.desc
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UniformBlockIndex {
     program: ProgramId,
     binding: u32,
     block_index: u32,
-}
-
-impl<'a, T> UniformBlockIndex<'a, T> {
-    pub fn bind_block(&self, buf: &BufferSlice<T>) -> anyhow::Result<()> {
-        gl_error_guard(|| unsafe {
-            gl::BindBufferRange(
-                buf.bound_buffer.kind() as _,
-                self.binding,
-                buf.bound_buffer.id.get(),
-                buf.offset,
-                buf.size,
-            );
-            gl::UniformBlockBinding(self.program.get(), self.block_index, self.binding);
-        })
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,7 +206,7 @@ impl std::ops::Deref for ProgramId {
 
 #[derive(Debug)]
 /// Unlinked program typestate. Unlinked programs can have shaders added to them. Linking an
-/// unlinked program produces a `Program<Linked>` structure.
+/// unlinked program produces a `Program` structure.
 pub struct Unlinked;
 
 #[derive(Debug)]
@@ -208,7 +215,7 @@ pub struct Linked;
 
 #[derive(Debug)]
 /// A shader program. Linkage status is tracked at compile-time.
-pub struct Program<Status> {
+pub struct Program<Status = Linked> {
     __status: Status,
     pub id: ProgramId,
 }
@@ -266,7 +273,7 @@ impl Program<Unlinked> {
     }
 
     /// Link the program.
-    pub fn link(self) -> anyhow::Result<Program<Linked>> {
+    pub fn link(self) -> anyhow::Result<Program> {
         let id = self.id.get();
         // Forget `self` to prevent running its destructor and call `glDeleteShader`.
         std::mem::forget(self);
@@ -298,7 +305,7 @@ impl Program<Unlinked> {
     }
 }
 
-impl<'a> Resource<'a> for Program<Linked> {
+impl<'a> Resource<'a> for Program {
     type Id = ProgramId;
     type Kind = ();
     type Bound = ActiveProgram<'a>;
@@ -309,9 +316,7 @@ impl<'a> Resource<'a> for Program<Linked> {
         Self::Id::new(id as _)
     }
 
-    fn kind(&self) -> Self::Kind {
-        ()
-    }
+    fn kind(&self) -> Self::Kind {}
 
     fn make_binding(&'a mut self) -> anyhow::Result<Self::Bound> {
         tracing::trace!("glUseProgram({})", self.id.get());
@@ -333,19 +338,27 @@ impl Program<Linked> {
         program.link()
     }
 
+    /// Load sources and create program from paths to a vertex, optional fragment and optional geometry shaders.
     pub fn from_sources<'vs, 'fs, 'gs>(
         vertex_shader: &'vs str,
         fragment_shader: impl Into<Option<&'fs str>>,
         geometry_shader: impl Into<Option<&'gs str>>,
     ) -> anyhow::Result<Self> {
-        let vertex = Shader::new(crate::shader::ShaderStage::Vertex, vertex_shader).context("Cannot parse vertex shader")?;
+        let vertex = Shader::new(crate::shader::ShaderStage::Vertex, vertex_shader)
+            .context("Cannot parse vertex shader")?;
         let fragment = if let Some(source) = fragment_shader.into() {
-            Some(Shader::new(crate::shader::ShaderStage::Fragment, source).context("Cannot parse fragment shader")?)
+            Some(
+                Shader::new(crate::shader::ShaderStage::Fragment, source)
+                    .context("Cannot parse fragment shader")?,
+            )
         } else {
             None
         };
         let geometry = if let Some(source) = geometry_shader.into() {
-            Some(Shader::new(crate::shader::ShaderStage::Geometry, source).context("Cannot parse geometry shader")?)
+            Some(
+                Shader::new(crate::shader::ShaderStage::Geometry, source)
+                    .context("Cannot parse geometry shader")?,
+            )
         } else {
             None
         };
@@ -356,6 +369,7 @@ impl Program<Linked> {
         )
     }
 
+    /// Load a program from a vertex, optional fragment and optional geometry shaders sources.
     pub fn load(
         vertex: impl AsRef<Path>,
         fragment: Option<impl AsRef<Path>>,
@@ -374,39 +388,29 @@ impl Program<Linked> {
         };
         Self::from_sources(&vertex, fragment.as_deref(), geometry.as_deref())
     }
-}
 
-/// An active program. The program gets bound when this gets constructed, and unbound when the
-/// variable goes out of scope.
-pub struct ActiveProgram<'a> {
-    program: &'a Program<Linked>,
-}
-
-impl<'a> std::ops::Deref for ActiveProgram<'a> {
-    type Target = Program<Linked>;
-
-    fn deref(&self) -> &Self::Target {
-        self.program
-    }
-}
-
-impl<'a> Binding<'a> for ActiveProgram<'a> {
-    type Parent = Program<Linked>;
-
-    fn unbind(&mut self, previous: Option<<Program<Linked> as Resource>::Id>) {
-        let prev_id = previous.map(|id| id.get()).unwrap_or(0);
+    /// Iterate over uniforms in this linked program.
+    pub fn get_uniforms(&self) -> impl Iterator<Item = UniformDesc> {
+        let mut num_uniforms = 0;
         unsafe {
-            gl::UseProgram(prev_id);
+            gl::GetProgramInterfaceiv(
+                self.id.get(),
+                gl::UNIFORM,
+                gl::ACTIVE_RESOURCES,
+                &mut num_uniforms,
+            );
         }
-    }
-}
 
-impl<'a> ActiveProgram<'a> {
+        let program_id = self.id;
+        (0..num_uniforms as u32).map(move |ix| UniformDesc::for_uniform_at_location(program_id, ix))
+    }
+
     /// Select an uniform from the program. Returns `None` if the uniform doesn't exist.
-    pub fn uniform<Type: Uniform>(&self, name: &str) -> Option<UniformLocation<Type>> {
+    pub fn uniform(&self, name: &str) -> Option<UniformLocation> {
+        // Leave it as i32 because it can return -1 for errors
         let location = unsafe {
             let name = CString::new(name).unwrap();
-            gl::GetUniformLocation(self.program.id.get(), name.as_ptr() as *const _)
+            gl::GetUniformLocation(self.id.get(), name.as_ptr() as *const _)
         };
         tracing::trace!(
             "glGetUniformLocation({}, {}) -> {}",
@@ -416,22 +420,19 @@ impl<'a> ActiveProgram<'a> {
         );
         if location >= 0 {
             Some(UniformLocation {
-                ty: PhantomData,
+                program: self.id,
                 location: location as _,
+                desc: UniformDesc::for_uniform_at_location(self.id, location as _),
             })
         } else {
             None
         }
     }
 
-    pub fn uniform_block<T>(
-        &self,
-        name: &str,
-        binding: u32,
-    ) -> anyhow::Result<UniformBlockIndex<T>> {
+    pub fn uniform_block(&self, name: &str, binding: u32) -> anyhow::Result<UniformBlockIndex> {
         let block_index = gl_error_guard(|| unsafe {
             let name = CString::new(name).unwrap();
-            gl::GetUniformBlockIndex(self.program.id.get(), name.as_ptr() as *const _)
+            gl::GetUniformBlockIndex(self.id.get(), name.as_ptr() as *const _)
         })?;
         tracing::trace!(
             "glGetUniformBlockIndex({}, {}) -> {}",
@@ -440,11 +441,128 @@ impl<'a> ActiveProgram<'a> {
             block_index
         );
         Ok(UniformBlockIndex {
-            ty: PhantomData,
             block_index,
             binding,
             program: self.id,
         })
+    }
+}
+
+/// An active program. The program gets bound when this gets constructed, and unbound when the
+/// variable goes out of scope.
+pub struct ActiveProgram<'a> {
+    program: &'a Program,
+}
+
+impl<'a> std::ops::Deref for ActiveProgram<'a> {
+    type Target = Program;
+
+    fn deref(&self) -> &Self::Target {
+        self.program
+    }
+}
+
+impl<'a> Binding<'a> for ActiveProgram<'a> {
+    type Parent = Program;
+
+    fn unbind(&mut self, previous: Option<<Program as Resource>::Id>) {
+        let prev_id = previous.map(|id| id.get()).unwrap_or(0);
+        unsafe {
+            gl::UseProgram(prev_id);
+        }
+    }
+}
+
+impl<'a> ActiveProgram<'a> {
+    pub fn set_uniform<T: Uniform>(
+        &self,
+        location: UniformLocation,
+        value: T,
+    ) -> anyhow::Result<()> {
+        if self.id != location.program {
+            anyhow::bail!(
+                "Cannot set uniform for program {} as the uniform location is for program {}",
+                self.id.get(),
+                location.program.get()
+            );
+        }
+        gl_error_guard(|| unsafe { value.write_uniform(location.location as _) })
+    }
+
+    pub fn bind_block<T>(
+        &self,
+        location: UniformBlockIndex,
+        buf: &BufferSlice<T>,
+    ) -> anyhow::Result<()> {
+        gl_error_guard(|| unsafe {
+            gl::BindBufferRange(
+                buf.bound_buffer.kind() as _,
+                location.binding,
+                buf.bound_buffer.id.get(),
+                buf.offset,
+                buf.size,
+            );
+            gl::UniformBlockBinding(self.id.get(), location.block_index, location.binding);
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct UniformDesc {
+    pub location: u32,
+    pub block_index: u32,
+    program: ProgramId,
+    name_length: usize,
+    raw_type: u32,
+}
+
+impl UniformDesc {
+    const PROG_IFACE_LEN: usize = 4;
+    const PROGRAM_INTERFACE: [GLenum; Self::PROG_IFACE_LEN] =
+        [gl::NAME_LENGTH, gl::TYPE, gl::BLOCK_INDEX, gl::LOCATION];
+
+    fn for_uniform_at_location(program: ProgramId, location: u32) -> UniformDesc {
+        let mut values = [0; Self::PROG_IFACE_LEN];
+        unsafe {
+            gl::GetProgramResourceiv(
+                program.get(),
+                gl::UNIFORM,
+                location,
+                Self::PROG_IFACE_LEN as _,
+                Self::PROGRAM_INTERFACE.as_ptr(),
+                Self::PROG_IFACE_LEN as _,
+                std::ptr::null_mut(),
+                values.as_mut_ptr(),
+            );
+        }
+        UniformDesc {
+            program,
+            location: values[3] as _,
+            name_length: values[0] as _,
+            block_index: values[2] as _,
+            raw_type: values[1] as _,
+        }
+    }
+
+    pub fn name(&self) -> String {
+        gl_string(
+            Some(self.name_length as _),
+            |capacity, len_ptr, str_ptr| unsafe {
+                gl::GetProgramResourceName(
+                    self.program.get(),
+                    gl::UNIFORM,
+                    self.location,
+                    capacity as _,
+                    len_ptr,
+                    str_ptr,
+                )
+            },
+        )
+        .expect("Garbled string returned from OpenGL")
+    }
+
+    pub fn is_type<T: GlType>(&self) -> bool {
+        T::GL_TYPE == self.raw_type
     }
 }
 

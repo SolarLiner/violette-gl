@@ -1,7 +1,7 @@
 use std::ops::{Range, RangeBounds};
 
 use bitflags::bitflags;
-use gl::types::GLuint;
+use gl::types::{GLenum, GLuint};
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
@@ -281,31 +281,37 @@ impl<'a> BoundFB<'a> {
         tracing::trace!("glFramebufferTexture{}D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT_{}, GL_TEXTURE_{}D, {}, 0)",
             texture.dimension().num_dimension(), attachment, texture.dimension().num_dimension(), texture.id());
         gl_error_guard(|| unsafe {
-            match texture.dimension() {
-                Dimension::D1 => gl::FramebufferTexture1D(
-                    gl::FRAMEBUFFER,
-                    gl::COLOR_ATTACHMENT0 + attachment as GLuint,
-                    gl::TEXTURE_1D,
-                    texture.id(),
-                    0,
-                ),
-                Dimension::D2 => gl::FramebufferTexture2D(
-                    gl::FRAMEBUFFER,
-                    gl::COLOR_ATTACHMENT0 + attachment as GLuint,
-                    gl::TEXTURE_2D,
-                    texture.id(),
-                    0,
-                ),
-                Dimension::D3 => gl::FramebufferTexture3D(
-                    gl::FRAMEBUFFER,
-                    gl::COLOR_ATTACHMENT0 + attachment as GLuint,
-                    gl::TEXTURE_3D,
-                    texture.id(),
-                    0,
-                    0,
-                ),
-                _ => panic!("Only 1D, 2D or 3D textures can be bound to framebuffers"),
-            }
+            gl::FramebufferTexture(
+                gl::FRAMEBUFFER,
+                gl::COLOR_ATTACHMENT0 + attachment as GLenum,
+                texture.id(),
+                0,
+            );
+            // match texture.dimension() {
+            //     Dimension::D1 => gl::FramebufferTexture1D(
+            //         gl::FRAMEBUFFER,
+            //         gl::COLOR_ATTACHMENT0 + attachment as GLuint,
+            //         gl::TEXTURE_1D,
+            //         texture.id(),
+            //         0,
+            //     ),
+            //     Dimension::D2 => gl::FramebufferTexture2D(
+            //         gl::FRAMEBUFFER,
+            //         gl::COLOR_ATTACHMENT0 + attachment as GLuint,
+            //         gl::TEXTURE_2D,
+            //         texture.id(),
+            //         0,
+            //     ),
+            //     Dimension::D3 => gl::FramebufferTexture3D(
+            //         gl::FRAMEBUFFER,
+            //         gl::COLOR_ATTACHMENT0 + attachment as GLuint,
+            //         gl::TEXTURE_3D,
+            //         texture.id(),
+            //         0,
+            //         0,
+            //     ),
+            //     _ => panic!("Only 1D, 2D or 3D textures can be bound to framebuffers"),
+            // }
         })
     }
 
@@ -377,6 +383,13 @@ impl<'a> BoundFB<'a> {
                 ),
                 _ => panic!("Only 1D, 2D or 3D texture can be attached into the depth slot"),
             }
+        })
+    }
+
+    pub fn enable_buffers<const N: usize>(&mut self, attachments: [u8; N]) -> anyhow::Result<()> {
+        let symbols = attachments.map(|ix| gl::COLOR_ATTACHMENT0 + ix as GLenum);
+        gl_error_guard(|| unsafe {
+            gl::DrawBuffers(N as _, symbols.as_ptr());
         })
     }
 

@@ -11,7 +11,7 @@ use duplicate::duplicate_item as duplicate;
 use gl::types::GLenum;
 use num_derive::FromPrimitive;
 
-use crate::program::Uniform;
+use crate::{program::Uniform, base::bindable::BindGuard};
 use crate::{
     base::{
         bindable::{BindableExt, Binding, Resource},
@@ -276,7 +276,19 @@ pub enum SampleMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TextureUnit(pub u32);
+#[repr(transparent)]
+pub struct TextureUnit(u32);
+
+impl GlType for TextureUnit {
+    const GL_TYPE: GLenum = gl::UNSIGNED_INT;
+
+    const NUM_COMPONENTS: usize = 1;
+
+    const NORMALIZED: bool = false;
+
+    const STRIDE: usize = std::mem::size_of::<Self>();
+    
+}
 
 impl Uniform for TextureUnit {
     unsafe fn write_uniform(&self, location: gl::types::GLint) {
@@ -350,13 +362,11 @@ impl<F> Texture<F> {
         }
     }
 
-    pub fn set_texture_unit(&mut self, TextureUnit(off): TextureUnit) {
-        self.unit.replace(gl::TEXTURE0 + off);
-    }
-
-    pub fn unset_texture_unit(&mut self) {
-        self.unit.take();
-    }
+    pub fn as_uniform(&mut self, unit: u32) -> anyhow::Result<(BindGuard<BoundTexture<F>>, TextureUnit)> {
+        gl_error_guard(|| unsafe { gl::ActiveTexture(gl::TEXTURE0 + unit); })?;
+        let binding = self.bind()?;
+        Ok((binding, TextureUnit(unit)))
+    }    
 
     pub fn dimension(&self) -> Dimension {
         self.id.target.dim

@@ -1,4 +1,4 @@
-use duplicate::duplicate_item as duplicate;
+use duplicate::duplicate_item;
 use gl::types::*;
 
 pub mod bindable;
@@ -10,40 +10,61 @@ pub trait GlType {
     const STRIDE: usize;
 }
 
-#[duplicate(
-rust_t      n       gl_t;
-[f32]       [1]     [gl::FLOAT];
-[f64]       [1]     [gl::DOUBLE];
-[u8]        [1]     [gl::UNSIGNED_BYTE];
-[i8]        [1]     [gl::BYTE];
-[u16]       [1]     [gl::UNSIGNED_SHORT];
-[i16]       [1]     [gl::SHORT];
-[u32]       [1]     [gl::UNSIGNED_INT];
-[i32]       [1]     [gl::INT];
-[[f32; 2]]  [2]     [gl::FLOAT];
-[[f64; 2]]  [2]     [gl::DOUBLE];
-[[u8; 2]]   [2]     [gl::UNSIGNED_BYTE];
-[[i8; 2]]   [2]     [gl::BYTE];
-[[u16; 2]]  [2]     [gl::UNSIGNED_SHORT];
-[[i16; 2]]  [2]     [gl::SHORT];
-[[u32; 2]]  [2]     [gl::UNSIGNED_INT];
-[[i32; 2]]  [2]     [gl::INT];
-[[f32; 3]]  [3]     [gl::FLOAT];
-[[f64; 3]]  [3]     [gl::DOUBLE];
-[[u8; 3]]   [3]     [gl::UNSIGNED_BYTE];
-[[i8; 3]]   [3]     [gl::BYTE];
-[[u16; 3]]  [3]     [gl::UNSIGNED_SHORT];
-[[i16; 3]]  [3]     [gl::SHORT];
-[[u32; 3]]  [3]     [gl::UNSIGNED_INT];
-[[i32; 3]]  [3]     [gl::INT];
-[[f32; 4]]  [4]     [gl::FLOAT];
-[[f64; 4]]  [4]     [gl::DOUBLE];
-[[u8; 4]]   [4]     [gl::UNSIGNED_BYTE];
-[[i8; 4]]   [4]     [gl::BYTE];
-[[u16; 4]]  [4]     [gl::UNSIGNED_SHORT];
-[[i16; 4]]  [4]     [gl::SHORT];
-[[u32; 4]]  [4]     [gl::UNSIGNED_INT];
-[[i32; 4]]  [4]     [gl::INT];
+#[duplicate_item(
+rust_t      gl_t;
+[f32]       [gl::FLOAT];
+[f64]       [gl::DOUBLE];
+[u8]        [gl::UNSIGNED_BYTE];
+[i8]        [gl::BYTE];
+[u16]       [gl::UNSIGNED_SHORT];
+[i16]       [gl::SHORT];
+[u32]       [gl::UNSIGNED_INT];
+[i32]       [gl::INT];
+)]
+impl GlType for rust_t {
+    const GL_TYPE: GLenum = gl_t;
+    const NUM_COMPONENTS: usize = 1;
+    const NORMALIZED: bool = false;
+    const STRIDE: usize = std::mem::size_of::<Self>();
+}
+
+#[duplicate_item(
+n; [2]; [3]; [4];
+)]
+#[duplicate_item(
+rust_t      gl_t;
+[[f32; n]]  [gl::FLOAT];
+[[f64; n]]  [gl::DOUBLE];
+[[u8; n]]   [gl::UNSIGNED_BYTE];
+[[i8; n]]   [gl::BYTE];
+[[u16; n]]  [gl::UNSIGNED_SHORT];
+[[i16; n]]  [gl::SHORT];
+[[u32; n]]  [gl::UNSIGNED_INT];
+[[i32; n]]  [gl::INT];
+)]
+impl GlType for rust_t {
+    const GL_TYPE: GLenum = gl_t;
+    const NUM_COMPONENTS: usize = n;
+    const NORMALIZED: bool = false;
+    const STRIDE: usize = std::mem::size_of::<Self>();
+}
+
+#[duplicate_item(
+n; [2]; [3]; [4];
+)]
+#[duplicate_item(
+m; [2]; [3]; [4];
+)]
+#[duplicate_item(
+rust_t              gl_t;
+[[[f32; n]; m]]     [gl::FLOAT];
+[[[f64; n]; m]]     [gl::DOUBLE];
+[[[u8; n]; m]]      [gl::UNSIGNED_BYTE];
+[[[i8; n]; m]]      [gl::BYTE];
+[[[u16; n]; m]]     [gl::UNSIGNED_SHORT];
+[[[i16; n]; m]]     [gl::SHORT];
+[[[u32; n]; m]]     [gl::UNSIGNED_INT];
+[[[i32; n]; m]]     [gl::INT];
 )]
 impl GlType for rust_t {
     const GL_TYPE: GLenum = gl_t;
@@ -64,13 +85,14 @@ impl<T: GlType> GlType for Normalized<T> {
 }
 
 #[cfg(feature = "vertex-glam")]
-#[duplicate(
+#[duplicate_item(
 rust_t          n       gl_t;
 [glam::Vec2]    [2]     [gl::FLOAT];
 [glam::DVec2]   [2]     [gl::DOUBLE];
 [glam::UVec2]   [2]     [gl::UNSIGNED_INT];
 [glam::IVec2]   [2]     [gl::INT];
 [glam::Vec3]    [3]     [gl::FLOAT];
+[glam::Vec3A]   [3]     [gl::FLOAT];
 [glam::DVec3]   [3]     [gl::DOUBLE];
 [glam::UVec3]   [3]     [gl::UNSIGNED_INT];
 [glam::IVec3]   [3]     [gl::INT];
@@ -78,6 +100,23 @@ rust_t          n       gl_t;
 [glam::DVec4]   [4]     [gl::DOUBLE];
 [glam::UVec4]   [4]     [gl::UNSIGNED_INT];
 [glam::IVec4]   [4]     [gl::INT];
+)]
+impl GlType for rust_t {
+    const GL_TYPE: GLenum = gl_t;
+    const NUM_COMPONENTS: usize = n;
+    const NORMALIZED: bool = false;
+    const STRIDE: usize = std::mem::size_of::<Self>();
+}
+
+#[cfg(feature = "vertex-glam")]
+#[duplicate_item(
+rust_t          n       gl_t;
+[glam::Mat2]    [2]     [gl::FLOAT];
+[glam::Mat3]    [3]     [gl::FLOAT];
+[glam::Mat4]    [4]     [gl::FLOAT];
+[glam::DMat2]   [2]     [gl::DOUBLE];
+[glam::DMat3]   [3]     [gl::DOUBLE];
+[glam::DMat4]   [4]     [gl::DOUBLE];
 )]
 impl GlType for rust_t {
     const GL_TYPE: GLenum = gl_t;

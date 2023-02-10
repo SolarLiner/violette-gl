@@ -1,8 +1,9 @@
 use std::{
     ffi::{c_void, CStr},
-    ops::Not
+    ops::Not,
 };
 
+use anyhow::Context;
 use gl::types::GLenum;
 use num_derive::FromPrimitive;
 
@@ -19,7 +20,6 @@ pub mod shader;
 pub mod texture;
 mod utils;
 pub mod vertex;
-
 
 pub fn load_with(loader: impl FnMut(&'static str) -> *const c_void) {
     gl::load_with(loader)
@@ -57,11 +57,15 @@ pub fn set_point_size(size: f32) {
     unsafe { gl::PointSize(size) }
 }
 
-pub fn get_string(of: GLenum) -> Option<String> {
-    unsafe {
+pub fn get_string(of: GLenum) -> anyhow::Result<String> {
+    gl_error_guard(|| unsafe {
         let ret = gl::GetString(of);
-        ret.is_null().not().then(|| CStr::from_ptr(ret.cast()).to_string_lossy().to_string())
-    }
+        ret.is_null()
+            .not()
+            .then(|| CStr::from_ptr(ret.cast()).to_string_lossy().to_string())
+            .context("No string returned from OpenGL")
+    })
+    .and_then(|res| res)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive)]
