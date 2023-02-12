@@ -224,9 +224,9 @@ impl<'a> Resource<'a> for Framebuffer {
 }
 
 impl Framebuffer {
-    pub fn viewport(&self, x: usize, y: usize, width: usize, height: usize) {
+    pub fn viewport(&self, x: i32, y: i32, width: i32, height: i32) {
         self.with_binding(|| unsafe {
-            gl::Viewport(x as _, y as _, width as _, height as _);
+            gl::Viewport(x, y, width, height);
         })
     }
 
@@ -306,7 +306,7 @@ impl Framebuffer {
         gl_error_guard(|| self.with_binding(|| program.with_binding(||
             vao.with_binding(||
                 unsafe {
-                    gl::DrawElements(gl::TRIANGLES, count, gl::UNSIGNED_INT, std::ptr::null());
+                    gl::DrawElements(mode as _, count, gl_type, std::ptr::null());
                 }))))
     }
 

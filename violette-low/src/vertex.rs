@@ -50,7 +50,7 @@ impl VaoId {
 #[non_exhaustive]
 pub enum DrawMode {
     Points = gl::POINTS,
-    TrianglesList = gl::TRIANGLES,
+    Triangles = gl::TRIANGLES,
     Lines = gl::LINES,
     LineLoop = gl::LINE_LOOP,
     LineStrip = gl::LINE_STRIP,
@@ -133,6 +133,7 @@ impl VertexArray {
         gl_error_guard(|| {
             self.bind();
             vertex_buffer.bind();
+            unsafe { V::Attr::vertex_attributes(); }
             for i in 0..V::Attr::COUNT {
                 self.enable_vertex_attribute(i as _);
             }
