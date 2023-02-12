@@ -86,7 +86,6 @@ impl<const K: u32> Shader<K> {
                 gl_string(Some(length as _), |len, len_ptr, ptr| {
                     gl::GetShaderInfoLog(id, len as _, len_ptr, ptr)
                 })
-                .unwrap()
             };
             eyre::bail!(error);
         } else {

@@ -1,5 +1,10 @@
-use std::{ffi::CString, fmt, fmt::Debug, num::NonZeroU32, path::Path};
-use std::fmt::Formatter;
+use std::{
+    borrow::Cow,
+    ffi::CString,
+    fmt::{self, Debug, Formatter},
+    num::NonZeroU32,
+    path::Path,
+};
 
 use duplicate::duplicate_item as duplicate;
 use either::Either;
@@ -7,16 +12,14 @@ use eyre::{Context, Result};
 use gl::types::{GLdouble, GLenum, GLfloat, GLint, GLuint};
 
 use crate::{
+    base::{
+        resource::{Resource, ResourceExt},
+        GlType,
+    },
     buffer::BufferSlice,
-    shader::ShaderId,
+    shader::{FragmentShader, GeometryShader, ShaderId, VertexShader},
     utils::{gl_error_guard, gl_string},
 };
-use crate::base::{
-    GlType,
-    resource::Resource,
-};
-use crate::base::resource::ResourceExt;
-use crate::shader::{FragmentShader, GeometryShader, VertexShader};
 
 /// Trait of types that can be written into shader uniforms. This allows polymorphic use of the
 /// methods on [`ActiveProgram`](struct::ActiveProgram);
@@ -256,8 +259,7 @@ impl<Status: Debug> Program<Status> {
             };
             let error = gl_string(Some(length), |len, ptr_len, ptr| unsafe {
                 gl::GetProgramInfoLog(self.id.get(), len as _, ptr_len, ptr);
-            })
-                .unwrap();
+            });
             eyre::bail!(error);
         }
         Ok(())
@@ -312,7 +314,6 @@ impl Program<Unlinked> {
                 gl_string(Some(length as _), |len, len_ptr, ptr| {
                     gl::GetProgramInfoLog(id, len as _, len_ptr, ptr)
                 })
-                    .unwrap()
             };
             eyre::bail!(error);
         }
@@ -348,21 +349,14 @@ impl Program<Linked> {
         fragment_shader: impl Into<Option<&'fs str>>,
         geometry_shader: impl Into<Option<&'gs str>>,
     ) -> Result<Self> {
-        let vertex = VertexShader::new(vertex_shader)
-            .context("Cannot parse vertex shader")?;
+        let vertex = VertexShader::new(vertex_shader).context("Cannot parse vertex shader")?;
         let fragment = if let Some(source) = fragment_shader.into() {
-            Some(
-                FragmentShader::new(source)
-                    .context("Cannot parse fragment shader")?,
-            )
+            Some(FragmentShader::new(source).context("Cannot parse fragment shader")?)
         } else {
             None
         };
         let geometry = if let Some(source) = geometry_shader.into() {
-            Some(
-                GeometryShader::new(source)
-                    .context("Cannot parse geometry shader")?,
-            )
+            Some(GeometryShader::new(source).context("Cannot parse geometry shader")?)
         } else {
             None
         };
@@ -397,8 +391,7 @@ impl Program<Linked> {
         Self::from_sources(&vertex, fragment.as_deref(), geometry.as_deref())
     }
 
-    /// Iterate over uniforms in this linked program.
-    pub fn get_uniforms(&self) -> impl Iterator<Item=UniformDesc> {
+    pub fn num_uniforms(&self) -> usize {
         let mut num_uniforms = 0;
         unsafe {
             gl::GetProgramInterfaceiv(
@@ -408,7 +401,12 @@ impl Program<Linked> {
                 &mut num_uniforms,
             );
         }
+        num_uniforms as _
+    }
 
+    /// Iterate over uniforms in this linked program.
+    pub fn get_uniforms(&self) -> impl Iterator<Item = UniformDesc> {
+        let num_uniforms = self.num_uniforms();
         let program_id = self.id;
         (0..num_uniforms as u32).map(move |ix| UniformDesc::for_uniform_at_location(program_id, ix))
     }
@@ -454,14 +452,32 @@ impl Program<Linked> {
             program: self.id,
         })
     }
-}
 
-impl Program<Linked> {
-    pub fn set_uniform<T: Uniform>(
-        &self,
-        location: UniformLocation,
-        value: T,
-    ) -> Result<()> {
+    pub fn num_attributes(&self) -> usize {
+        let mut ret = 0;
+        unsafe {
+            gl::GetProgramiv(self.id.get(), gl::ACTIVE_ATTRIBUTES, &mut ret);
+        }
+        ret as _
+    }
+
+    pub fn get_attributes(&self) -> impl Iterator<Item = AttributeDesc> {
+        let num_attributes = self.num_attributes();
+        let id = self.id;
+        (0..num_attributes as _).map(move |attr| AttributeDesc::for_attribute(id, attr))
+    }
+
+    pub fn attribute(&self, name: &str) -> Result<AttributeDesc> {
+        let attr = gl_error_guard(|| unsafe {
+            let name = CString::new(name).unwrap();
+            gl::GetAttribLocation(self.id.get(), name.as_ptr())
+        })?;
+        eyre::ensure!(attr > 0, "Attribute does not exist");
+
+        Ok(AttributeDesc::for_attribute(self.id, attr as _))
+    }
+    
+    pub fn set_uniform<T: Uniform>(&self, location: UniformLocation, value: T) -> Result<()> {
         if self.id != location.program {
             eyre::bail!(
                 "Cannot set uniform for program {} as the uniform location is for program {}",
@@ -469,7 +485,9 @@ impl Program<Linked> {
                 location.program.get()
             );
         }
-        gl_error_guard(|| self.with_binding(|| unsafe { value.write_uniform(location.location as _) }))
+        gl_error_guard(|| {
+            self.with_binding(|| unsafe { value.write_uniform(location.location as _) })
+        })
     }
 
     pub fn bind_block<T>(
@@ -527,7 +545,7 @@ impl UniformDesc {
         }
     }
 
-    pub fn name(&self) -> String {
+    pub fn name(&self) -> Cow<str> {
         gl_string(
             Some(self.name_length as _),
             |capacity, len_ptr, str_ptr| unsafe {
@@ -541,7 +559,6 @@ impl UniformDesc {
                 )
             },
         )
-            .expect("Garbled string returned from OpenGL")
     }
 
     pub fn is_type<T: GlType>(&self) -> bool {
@@ -555,4 +572,42 @@ pub fn current_program() -> Option<ProgramId> {
         gl::GetIntegerv(gl::CURRENT_PROGRAM, &mut current_program);
         current_program as _
     })
+}
+
+#[derive(Debug, Clone)]
+pub struct AttributeDesc {
+    pub program: ProgramId,
+    pub index: u32,
+    pub name: Cow<'static, str>,
+    pub gl_size: i32,
+    raw_type: GLenum,
+}
+
+impl AttributeDesc {
+    pub fn is<T: GlType>(&self) -> bool {
+        self.raw_type == T::GL_TYPE
+    }
+
+    fn for_attribute(id: ProgramId, attr: u32) -> Self {
+        let mut raw_type = 0;
+        let mut gl_size = 0;
+        let name = gl_string(None, |cap, len_ptr, str_ptr| unsafe {
+            gl::GetActiveAttrib(
+                id.get(),
+                attr,
+                cap as _,
+                len_ptr,
+                &mut gl_size,
+                &mut raw_type,
+                str_ptr,
+            )
+        });
+        Self {
+            program: id,
+            index: attr,
+            name,
+            gl_size,
+            raw_type,
+        }
+    }
 }

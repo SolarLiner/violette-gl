@@ -157,12 +157,14 @@ impl VertexArray {
 pub trait VertexAttributes {
     const COUNT: usize;
 
+    /// Load vertex attributes.
+    /// # Safety
+    /// This function is unsafe because it is directly talking to OpenGL. Implementers *should*
+    /// assume that a VAO is bound, and callees *must* check for errors here.
+    /// This function is also unsafe because it has the responsibility of correctly telling OpenGL
+    /// how to interpret the binary data sent to it for drawing. As such, implementers must make sure
+    /// that the type is correctly described by the attributes described within this function call.
     unsafe fn vertex_attributes();
-}
-
-macro_rules! count {
-    () => (0usize);
-    ( $x:tt $($xs:tt)* ) => (1usize + count!($($xs)*));
 }
 
 impl<T: GlType> VertexAttributes for T {

@@ -299,8 +299,8 @@ impl Framebuffer {
         mode: DrawMode,
         slice: impl RangeBounds<i32>,
     ) -> Result<()> {
-        eyre::ensure!(vao.element.is_some(), "Vertex Array Object needs to be bound to an Element Buffer");
-        let (gl_type, len) = vao.element.unwrap();
+        let Some((gl_type, len)) = vao.element else { eyre::bail!( "Vertex Array Object needs to be bound to an Element Buffer") };
+        program.get_attributes().for_each(|attr| tracing::info!(attribute=?attr));
         let slice = normalize_range(slice, 0..len as _);
         let count = slice.end - slice.start;
         gl_error_guard(|| self.with_binding(|| program.with_binding(||
@@ -325,7 +325,7 @@ impl Framebuffer {
     }
 
     pub fn attach_depth<D, S>(
-        &mut self,
+        &self,
         texture: &Texture<DepthStencil<D, S>>,
     ) -> Result<()> {
         tracing::trace!(
@@ -397,7 +397,7 @@ impl Framebuffer {
             }))
     }
 
-    pub fn enable_buffers(&mut self, attachments: impl IntoIterator<Item=u32>) -> Result<()> {
+    pub fn enable_buffers(&self, attachments: impl IntoIterator<Item=u32>) -> Result<()> {
         let symbols = attachments.into_iter().map(|ix| gl::COLOR_ATTACHMENT0 + ix).collect::<Vec<_>>();
         gl_error_guard(|| self.with_binding(||
             unsafe {

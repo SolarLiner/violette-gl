@@ -1,11 +1,12 @@
 use std::{
+    borrow::Cow,
     ffi::CStr,
     marker::PhantomData,
     mem::ManuallyDrop,
-    ops::{Deref, DerefMut}
+    ops::{Deref, DerefMut},
 };
 
-use eyre::{Result};
+use eyre::Result;
 use gl::types::{GLchar, GLsizei};
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
@@ -15,17 +16,17 @@ use thiserror::Error;
 pub(crate) fn gl_string(
     planned_length: Option<usize>,
     getter: impl FnOnce(usize, *mut GLsizei, *mut GLchar),
-) -> Option<String> {
+) -> Cow<'static, str> {
     let capacity = planned_length.unwrap_or(1024);
     let mut data = vec![0u8; capacity];
     let mut length = 0;
     getter(capacity, &mut length, data.as_mut_ptr() as *mut _);
 
     if length == 0 {
-        return None;
+        return Cow::Borrowed("");
     }
-    Some(
-        CStr::from_bytes_with_nul(&data)
+    Cow::Owned(
+        CStr::from_bytes_with_nul(&data[..length as usize + 1])
             .expect("OpenGL failure: corrupted string message")
             .to_string_lossy()
             .to_string(),
