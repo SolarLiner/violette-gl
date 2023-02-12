@@ -1,12 +1,12 @@
-use std::{ffi::{CStr, CString}, fmt, num::NonZeroU32, path::Path};
+use std::{ffi::{CString}, fmt, num::NonZeroU32, path::Path};
 use std::fmt::Formatter;
 
 use eyre::{Context, Result};
-use gl::types::GLuint;
+
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
-use crate::utils::{gl_error_guard, gl_string};
+use crate::utils::{gl_string};
 
 pub type VertexShader = Shader<{gl::VERTEX_SHADER}>;
 pub type FragmentShader = Shader<{gl::FRAGMENT_SHADER}>;

@@ -227,11 +227,11 @@ impl<T: Pod, const K: u32> Buffer<T, K> {
         let alignment = next_multiple(sizeof, *GL_ALIGNMENT);
         let start = match range.start_bound() {
             Bound::Included(i) => *i,
-            Bound::Excluded(i) => (i + 1),
+            Bound::Excluded(i) => i + 1,
             Bound::Unbounded => 0,
         } * alignment;
         let end = match range.end_bound() {
-            Bound::Included(i) => (i + 1),
+            Bound::Included(i) => i + 1,
             Bound::Excluded(i) => *i,
             Bound::Unbounded => self.count * std::mem::size_of::<T>(),
         } * alignment;

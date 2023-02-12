@@ -1,4 +1,4 @@
-use std::fmt::{Debug, Display};
+use std::fmt::{Display};
 
 /// Trait of types allowed to be bound. The binding is a separate type who has the responsibility of
 /// unbinding the resource.
@@ -22,10 +22,10 @@ pub trait ResourceExt<'a>: Resource<'a> {
         cb: F,
     ) -> T {
         self.bind();
-        let ret = cb();
+        
         #[cfg(not(feature = "no-unbind"))]
         self.unbind();
-        ret
+        cb()
     }
 }
 

@@ -436,11 +436,10 @@ impl Texture<[f32; 2]> {
             .into_rgb32f();
         let data = img
             .pixels()
-            .map(|px| {
+            .flat_map(|px| {
                 let [r, g, _] = px.0;
                 [r, g]
             })
-            .flatten()
             .collect::<Vec<_>>();
         Self::from_2d_pixels(img.width() as usize, &data).context("Cannot upload texture")
     }

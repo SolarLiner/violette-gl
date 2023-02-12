@@ -17,8 +17,8 @@ use crate::{
 };
 
 use eyre::Result;
-use gl::types::{GLenum, GLint};
-use image::imageops::vertical_gradient;
+use gl::types::{GLenum};
+
 use crate::buffer::ElementBuffer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

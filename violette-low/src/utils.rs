@@ -5,7 +5,7 @@ use std::{
     ops::{Deref, DerefMut}
 };
 
-use eyre::{Context, Result};
+use eyre::{Result};
 use gl::types::{GLchar, GLsizei};
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
