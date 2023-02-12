@@ -1,7 +1,7 @@
 use duplicate::duplicate_item;
 use gl::types::*;
 
-pub mod bindable;
+pub mod resource;
 
 pub trait GlType {
     const GL_TYPE: GLenum;

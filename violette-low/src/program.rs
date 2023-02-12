@@ -1,19 +1,22 @@
-use std::{ffi::CString, fmt::Debug, marker::PhantomData, num::NonZeroU32, path::Path};
+use std::{ffi::CString, fmt, fmt::Debug, num::NonZeroU32, path::Path};
+use std::fmt::Formatter;
 
-use anyhow::Context;
 use duplicate::duplicate_item as duplicate;
 use either::Either;
+use eyre::{Context, Result};
 use gl::types::{GLdouble, GLenum, GLfloat, GLint, GLuint};
 
-use crate::base::{
-    bindable::{Binding, Resource},
-    GlType,
-};
 use crate::{
     buffer::BufferSlice,
-    shader::{Shader, ShaderId},
+    shader::ShaderId,
     utils::{gl_error_guard, gl_string},
 };
+use crate::base::{
+    GlType,
+    resource::Resource,
+};
+use crate::base::resource::ResourceExt;
+use crate::shader::{FragmentShader, GeometryShader, VertexShader};
 
 /// Trait of types that can be written into shader uniforms. This allows polymorphic use of the
 /// methods on [`ActiveProgram`](struct::ActiveProgram);
@@ -190,6 +193,12 @@ pub struct UniformBlockIndex {
 /// into a single `u32` into memory.
 pub struct ProgramId(pub(crate) NonZeroU32);
 
+impl fmt::Display for ProgramId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0.get())
+    }
+}
+
 impl ProgramId {
     pub fn new(id: GLuint) -> Option<Self> {
         NonZeroU32::new(id).map(Self)
@@ -231,7 +240,7 @@ impl<Status> Drop for Program<Status> {
 
 impl<Status: Debug> Program<Status> {
     #[tracing::instrument]
-    pub fn validate(&self) -> anyhow::Result<()> {
+    pub fn validate(&self) -> Result<()> {
         tracing::trace!("glValidateProgram({})", self.id.get());
         let is_valid = unsafe {
             gl::ValidateProgram(self.id.get());
@@ -248,8 +257,8 @@ impl<Status: Debug> Program<Status> {
             let error = gl_string(Some(length), |len, ptr_len, ptr| unsafe {
                 gl::GetProgramInfoLog(self.id.get(), len as _, ptr_len, ptr);
             })
-            .unwrap();
-            anyhow::bail!(error);
+                .unwrap();
+            eyre::bail!(error);
         }
         Ok(())
     }
@@ -267,13 +276,19 @@ impl Program<Unlinked> {
     }
 
     ///Add a compiled shader into the current program.
-    pub fn add_shader(&mut self, id: ShaderId) {
+    pub fn add_shader<const K: u32>(&mut self, id: ShaderId<K>) {
         tracing::trace!("glAttachShader({}, {})", self.id.get(), id.get());
-        unsafe { gl::AttachShader(self.id.get(), id.get()) }
+        unsafe { gl::AttachShader(self.id.get(), id.get()) };
+    }
+
+    ///Add a compiled shader into the current program.
+    pub fn with_shader<const K: u32>(mut self, id: ShaderId<K>) -> Self {
+        self.add_shader(id);
+        self
     }
 
     /// Link the program.
-    pub fn link(self) -> anyhow::Result<Program> {
+    pub fn link(self) -> Result<Program> {
         let id = self.id.get();
         // Forget `self` to prevent running its destructor and call `glDeleteShader`.
         std::mem::forget(self);
@@ -286,7 +301,6 @@ impl Program<Unlinked> {
         };
         tracing::trace!("glLinkProgram({}) -> success: {}", id, is_success);
         if is_success {
-            assert_eq!(unsafe { gl::IsProgram(id) }, gl::TRUE);
             Ok(Program {
                 id: ProgramId::new(id).unwrap(),
                 __status: Linked,
@@ -298,57 +312,47 @@ impl Program<Unlinked> {
                 gl_string(Some(length as _), |len, len_ptr, ptr| {
                     gl::GetProgramInfoLog(id, len as _, len_ptr, ptr)
                 })
-                .unwrap()
+                    .unwrap()
             };
-            anyhow::bail!(error);
+            eyre::bail!(error);
         }
     }
 }
 
 impl<'a> Resource<'a> for Program {
     type Id = ProgramId;
-    type Kind = ();
-    type Bound = ActiveProgram<'a>;
 
-    fn current(_: Self::Kind) -> Option<Self::Id> {
+    fn id(&self) -> Self::Id {
+        self.id
+    }
+
+    fn current() -> Option<Self::Id> {
         let mut id = 0;
         unsafe { gl::GetIntegerv(gl::CURRENT_PROGRAM, &mut id) }
         Self::Id::new(id as _)
     }
 
-    fn kind(&self) -> Self::Kind {}
+    fn bind(&self) {
+        unsafe { gl::UseProgram(self.id.get() as _) }
+    }
 
-    fn make_binding(&'a mut self) -> anyhow::Result<Self::Bound> {
-        tracing::trace!("glUseProgram({})", self.id.get());
-        unsafe {
-            gl::UseProgram(self.id.get());
-        }
-        Ok(ActiveProgram { program: self })
+    fn unbind(&self) {
+        unsafe { gl::UseProgram(0) }
     }
 }
 
 impl Program<Linked> {
-    /// Create a program from the provided shaders. The resulting program will be linked and ready
-    /// to use.
-    pub fn from_shaders(shaders: impl IntoIterator<Item = ShaderId>) -> anyhow::Result<Self> {
-        let mut program = Program::new();
-        shaders
-            .into_iter()
-            .for_each(|sh_id| program.add_shader(sh_id));
-        program.link()
-    }
-
     /// Load sources and create program from paths to a vertex, optional fragment and optional geometry shaders.
     pub fn from_sources<'vs, 'fs, 'gs>(
         vertex_shader: &'vs str,
         fragment_shader: impl Into<Option<&'fs str>>,
         geometry_shader: impl Into<Option<&'gs str>>,
-    ) -> anyhow::Result<Self> {
-        let vertex = Shader::new(crate::shader::ShaderStage::Vertex, vertex_shader)
+    ) -> Result<Self> {
+        let vertex = VertexShader::new(vertex_shader)
             .context("Cannot parse vertex shader")?;
         let fragment = if let Some(source) = fragment_shader.into() {
             Some(
-                Shader::new(crate::shader::ShaderStage::Fragment, source)
+                FragmentShader::new(source)
                     .context("Cannot parse fragment shader")?,
             )
         } else {
@@ -356,17 +360,21 @@ impl Program<Linked> {
         };
         let geometry = if let Some(source) = geometry_shader.into() {
             Some(
-                Shader::new(crate::shader::ShaderStage::Geometry, source)
+                GeometryShader::new(source)
                     .context("Cannot parse geometry shader")?,
             )
         } else {
             None
         };
-        Self::from_shaders(
-            std::iter::once(vertex.id)
-                .chain(fragment.as_ref().map(|s| s.id))
-                .chain(geometry.as_ref().map(|s| s.id)),
-        )
+        let mut program = Program::new();
+        program.add_shader(vertex.id);
+        if let Some(fragment) = fragment {
+            program.add_shader(fragment.id);
+        }
+        if let Some(geometry) = geometry {
+            program.add_shader(geometry.id);
+        }
+        program.link()
     }
 
     /// Load a program from a vertex, optional fragment and optional geometry shaders sources.
@@ -374,7 +382,7 @@ impl Program<Linked> {
         vertex: impl AsRef<Path>,
         fragment: Option<impl AsRef<Path>>,
         geometry: Option<impl AsRef<Path>>,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self> {
         let vertex = std::fs::read_to_string(vertex)?;
         let fragment = if let Some(path) = fragment {
             Some(std::fs::read_to_string(path)?)
@@ -390,7 +398,7 @@ impl Program<Linked> {
     }
 
     /// Iterate over uniforms in this linked program.
-    pub fn get_uniforms(&self) -> impl Iterator<Item = UniformDesc> {
+    pub fn get_uniforms(&self) -> impl Iterator<Item=UniformDesc> {
         let mut num_uniforms = 0;
         unsafe {
             gl::GetProgramInterfaceiv(
@@ -429,7 +437,7 @@ impl Program<Linked> {
         }
     }
 
-    pub fn uniform_block(&self, name: &str, binding: u32) -> anyhow::Result<UniformBlockIndex> {
+    pub fn uniform_block(&self, name: &str, binding: u32) -> Result<UniformBlockIndex> {
         let block_index = gl_error_guard(|| unsafe {
             let name = CString::new(name).unwrap();
             gl::GetUniformBlockIndex(self.id.get(), name.as_ptr() as *const _)
@@ -448,57 +456,32 @@ impl Program<Linked> {
     }
 }
 
-/// An active program. The program gets bound when this gets constructed, and unbound when the
-/// variable goes out of scope.
-pub struct ActiveProgram<'a> {
-    program: &'a Program,
-}
-
-impl<'a> std::ops::Deref for ActiveProgram<'a> {
-    type Target = Program;
-
-    fn deref(&self) -> &Self::Target {
-        self.program
-    }
-}
-
-impl<'a> Binding<'a> for ActiveProgram<'a> {
-    type Parent = Program;
-
-    fn unbind(&mut self, previous: Option<<Program as Resource>::Id>) {
-        let prev_id = previous.map(|id| id.get()).unwrap_or(0);
-        unsafe {
-            gl::UseProgram(prev_id);
-        }
-    }
-}
-
-impl<'a> ActiveProgram<'a> {
+impl Program<Linked> {
     pub fn set_uniform<T: Uniform>(
         &self,
         location: UniformLocation,
         value: T,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         if self.id != location.program {
-            anyhow::bail!(
+            eyre::bail!(
                 "Cannot set uniform for program {} as the uniform location is for program {}",
                 self.id.get(),
                 location.program.get()
             );
         }
-        gl_error_guard(|| unsafe { value.write_uniform(location.location as _) })
+        gl_error_guard(|| self.with_binding(|| unsafe { value.write_uniform(location.location as _) }))
     }
 
     pub fn bind_block<T>(
         &self,
         location: UniformBlockIndex,
-        buf: &BufferSlice<T>,
-    ) -> anyhow::Result<()> {
+        buf: &BufferSlice<T, { gl::UNIFORM_BUFFER }>,
+    ) -> Result<()> {
         gl_error_guard(|| unsafe {
             gl::BindBufferRange(
-                buf.bound_buffer.kind() as _,
+                gl::UNIFORM_BUFFER,
                 location.binding,
-                buf.bound_buffer.id.get(),
+                buf.buffer.id.get(),
                 buf.offset,
                 buf.size,
             );
@@ -558,7 +541,7 @@ impl UniformDesc {
                 )
             },
         )
-        .expect("Garbled string returned from OpenGL")
+            .expect("Garbled string returned from OpenGL")
     }
 
     pub fn is_type<T: GlType>(&self) -> bool {

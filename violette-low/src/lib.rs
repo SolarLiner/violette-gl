@@ -3,7 +3,7 @@ use std::{
     ops::Not,
 };
 
-use anyhow::ContextCompat;
+use eyre::{Context, ContextCompat, Result};
 use gl::types::GLenum;
 use num_derive::FromPrimitive;
 
@@ -57,7 +57,7 @@ pub fn set_point_size(size: f32) {
     unsafe { gl::PointSize(size) }
 }
 
-pub fn get_string(of: GLenum) -> anyhow::Result<String> {
+pub fn get_string(of: GLenum) -> Result<String> {
     gl_error_guard(|| unsafe {
         let ret = gl::GetString(of);
         ret.is_null()

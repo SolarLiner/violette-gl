@@ -1,27 +1,35 @@
-use std::any::{Any, TypeId};
 use std::{
-    marker::PhantomData,
-    mem::ManuallyDrop,
-    num::NonZeroU32,
-    ops::{Range, RangeBounds},
+    fmt::{
+        Formatter,
+        self
+    },
+    num::NonZeroU32
 };
 
-use duplicate::duplicate;
-
-use crate::utils::GlRef;
 use crate::{
     base::{
-        bindable::{BindableExt, Binding, Resource},
+        resource::{Resource},
         GlType,
     },
-    buffer::{Buffer, BufferId},
-    program::ActiveProgram,
     utils::gl_error_guard,
+    base::resource::ResourceExt,
+    buffer::ArrayBuffer
 };
+
+use eyre::Result;
+use gl::types::{GLenum, GLint};
+use image::imageops::vertical_gradient;
+use crate::buffer::ElementBuffer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct VaoId(NonZeroU32);
+
+impl fmt::Display for VaoId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0.get())
+    }
+}
 
 impl std::ops::Deref for VaoId {
     type Target = NonZeroU32;
@@ -51,26 +59,17 @@ pub enum DrawMode {
 #[derive(Debug)]
 pub struct VertexArray {
     id: VaoId,
-    bound_buffers: Vec<(TypeId, BufferId)>,
-}
-
-impl VertexArray {
-    pub fn buffer<V: 'static + Any>(&self, i: usize) -> Option<GlRef<'_, Buffer<V>>> {
-        let (type_id, id) = self.bound_buffers.get(i).copied()?;
-        if TypeId::of::<V>() != type_id {
-            None
-        } else {
-            Some(GlRef::create(unsafe { Buffer::from_id(id) }))
-        }
-    }
+    pub(crate) element: Option<(GLenum, usize)>,
 }
 
 impl<'a> Resource<'a> for VertexArray {
     type Id = VaoId;
-    type Kind = ();
-    type Bound = BoundVao<'a>;
 
-    fn current(_: Self::Kind) -> Option<Self::Id> {
+    fn id(&self) -> Self::Id {
+        self.id
+    }
+
+    fn current() -> Option<Self::Id> {
         let mut id = 0;
         unsafe {
             gl::GetIntegerv(gl::VERTEX_ARRAY_BINDING, &mut id);
@@ -78,16 +77,12 @@ impl<'a> Resource<'a> for VertexArray {
         VaoId::new(id as _)
     }
 
-    fn kind(&self) -> Self::Kind {
-        ()
+    fn bind(&self) {
+        unsafe {gl::BindVertexArray(self.id.get())}
     }
 
-    fn make_binding(&'a mut self) -> anyhow::Result<Self::Bound> {
-        tracing::trace!("glBindVertexArray({})", self.id.get());
-        unsafe {
-            gl::BindVertexArray(self.id.get());
-        }
-        Ok(BoundVao { vao: self })
+    fn unbind(&self) {
+        unsafe {gl::BindVertexArray(0)}
     }
 }
 
@@ -100,7 +95,7 @@ impl VertexArray {
         }
         Self {
             id: VaoId::new(id).unwrap(),
-            bound_buffers: vec![],
+            element: None,
         }
     }
 }
@@ -108,75 +103,53 @@ impl VertexArray {
 impl Drop for VertexArray {
     fn drop(&mut self) {
         unsafe {
-            let ids = self
-                .bound_buffers
-                .drain(..)
-                .map(|(_, id)| id.get())
-                .collect::<Vec<_>>();
-            gl::DeleteBuffers(self.bound_buffers.len() as _, ids.as_ptr());
             let vid = self.id.get();
             gl::DeleteVertexArrays(1, &vid);
         }
     }
 }
 
-#[derive(Debug)]
-pub struct BoundVao<'a> {
-    vao: &'a mut VertexArray,
-}
-
-impl<'a> std::ops::Deref for BoundVao<'a> {
-    type Target = VertexArray;
-
-    fn deref(&self) -> &Self::Target {
-        self.vao
-    }
-}
-
-impl<'a> std::ops::DerefMut for BoundVao<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.vao
-    }
-}
-
-impl<'a> Binding<'a> for BoundVao<'a> {
-    type Parent = VertexArray;
-
-    fn unbind(&mut self, previous: Option<<VertexArray as Resource<'a>>::Id>) {
-        tracing::trace!("glBindVertexArray(<previous>)");
-        unsafe {
-            gl::BindVertexArray(previous.map(|id| id.get()).unwrap_or(0));
-        }
-    }
-}
-
-impl<'a> BoundVao<'a> {
-    pub fn set_vertex_attributes<V: VertexAttributes>(&mut self) {
-        unsafe { V::vertex_attributes() }
+impl VertexArray {
+    pub fn set_vertex_attributes<V: VertexAttributes>(&mut self) -> Result<()> {
+        gl_error_guard(|| self.with_binding(|| unsafe { V::vertex_attributes() }))
     }
 
     pub fn enable_vertex_attribute(&mut self, index: usize) {
-        unsafe {
+        self.with_binding(|| unsafe {
             gl::EnableVertexAttribArray(index as _);
-        }
+        })
+    }
+
+    pub fn disable_vertex_attribute(&mut self, index: usize) {
+        self.with_binding(|| unsafe {
+            gl::DisableVertexAttribArray(index as _);
+        })
     }
 
     pub fn with_vertex_buffer<V: 'static + AsVertexAttributes>(
         &mut self,
-        vertex_buffer: Buffer<V>,
-    ) -> anyhow::Result<()> {
-        // Don't run ``drop` on the buffer to be bound - we don't want the GPU buffers to be
-        // deleted when exiting the scope
-        let mut vertex_buffer = ManuallyDrop::new(vertex_buffer);
-        self.bound_buffers
-            .push((TypeId::of::<V>(), vertex_buffer.id));
+        vertex_buffer: &ArrayBuffer<V>,
+    ) -> Result<()> {
         gl_error_guard(|| {
-            let _vbuf_bind = vertex_buffer.bind();
-            self.set_vertex_attributes::<V::Attr>();
+            self.bind();
+            vertex_buffer.bind();
             for i in 0..V::Attr::COUNT {
                 self.enable_vertex_attribute(i as _);
             }
+            self.unbind();
+            vertex_buffer.unbind();
         })
+    }
+
+    pub fn with_element_buffer<T: GlType>(&mut self, element_buffer: &ElementBuffer<T>) -> Result<()> {
+        gl_error_guard(|| {
+            self.bind();
+            element_buffer.bind();
+            self.unbind();
+            element_buffer.unbind();
+        })?;
+        self.element.replace((T::GL_TYPE, element_buffer.len()));
+        Ok(())
     }
 }
 
@@ -184,6 +157,11 @@ pub trait VertexAttributes {
     const COUNT: usize;
 
     unsafe fn vertex_attributes();
+}
+
+macro_rules! count {
+    () => (0usize);
+    ( $x:tt $($xs:tt)* ) => (1usize + count!($($xs)*));
 }
 
 impl<T: GlType> VertexAttributes for T {

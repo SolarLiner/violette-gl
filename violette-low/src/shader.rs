@@ -1,15 +1,16 @@
-use std::{
-    ffi::{CStr, CString},
-    num::NonZeroU32,
-    path::Path,
-};
+use std::{ffi::{CStr, CString}, fmt, num::NonZeroU32, path::Path};
+use std::fmt::Formatter;
 
-use anyhow::Context;
+use eyre::{Context, Result};
 use gl::types::GLuint;
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
 use crate::utils::{gl_error_guard, gl_string};
+
+pub type VertexShader = Shader<{gl::VERTEX_SHADER}>;
+pub type FragmentShader = Shader<{gl::FRAGMENT_SHADER}>;
+pub type GeometryShader = Shader<{gl::GEOMETRY_SHADER}>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive)]
 #[repr(u32)]
@@ -25,9 +26,15 @@ pub enum ShaderStage {
 #[repr(transparent)]
 /// Shader ID newtype. Guaranteed to be non-zero if it exists. Allows `Option<ShaderId>` to coerce
 /// into a single `u32` into memory.
-pub struct ShaderId(NonZeroU32);
+pub struct ShaderId<const K: u32>(NonZeroU32);
 
-impl std::ops::Deref for ShaderId {
+impl<const K: u32> fmt::Display for ShaderId<K> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0.get())
+    }
+}
+
+impl<const K: u32> std::ops::Deref for ShaderId<K> {
     type Target = NonZeroU32;
 
     fn deref(&self) -> &Self::Target {
@@ -35,7 +42,7 @@ impl std::ops::Deref for ShaderId {
     }
 }
 
-impl ShaderId {
+impl<const K: u32> ShaderId<K> {
     fn new(id: u32) -> Option<Self> {
         Some(Self(NonZeroU32::new(id)?))
     }
@@ -43,14 +50,12 @@ impl ShaderId {
 
 #[derive(Debug)]
 /// OpenGL shader, a unit of work in an OpenGL pipeline.
-pub struct Shader {
+pub struct Shader<const K: u32> {
     /// Shader ID. Guaranteed to be non-zero, as ID 0 is reserved for unbinding shaders.
-    pub id: ShaderId,
-    /// Stage associated with this shader.
-    pub stage: ShaderStage,
+    pub id: ShaderId<K>,
 }
 
-impl Drop for Shader {
+impl<const K: u32> Drop for Shader<K> {
     fn drop(&mut self) {
         tracing::trace!("glDeleteShader({})", self.id.get());
         unsafe {
@@ -59,27 +64,13 @@ impl Drop for Shader {
     }
 }
 
-impl Shader {
-    /// Initializes a shader object from an existing shader.
-    pub fn from_id(id: GLuint) -> anyhow::Result<Self> {
-        anyhow::ensure!(id > 0, "Shader IDs need to be strictly positive");
-        let stage = gl_error_guard(|| unsafe {
-            let mut kind = 0;
-            gl::GetShaderiv(id, gl::SHADER_TYPE, &mut kind);
-            ShaderStage::from_u32(kind as _).unwrap()
-        })?;
-        Ok(Self {
-            id: ShaderId::new(id).unwrap(),
-            stage,
-        })
-    }
-
+impl<const K: u32> Shader<K> {
     /// Create a shader from the provided source. The shader will be compiled and verified within
     /// this method call.
     #[tracing::instrument(skip(source))]
-    pub fn new(stage: ShaderStage, source: &str) -> anyhow::Result<Self> {
-        let id = unsafe { gl::CreateShader(stage as _) };
-        tracing::trace!("glCreateShader({:?}) -> {}", stage, id);
+    pub fn new(source: &str) -> Result<Self> {
+        let id = unsafe { gl::CreateShader(K) };
+        tracing::trace!("glCreateShader({:?}) -> {}", K, id);
         let success = unsafe {
             let source = CString::new(source).unwrap();
             gl::ShaderSource(id, 1, &source.as_ptr(), std::ptr::null());
@@ -97,17 +88,16 @@ impl Shader {
                 })
                 .unwrap()
             };
-            anyhow::bail!(error);
+            eyre::bail!(error);
         } else {
             Ok(Self {
                 id: ShaderId::new(id).unwrap(),
-                stage,
             })
         }
     }
 
-    pub fn load(stage: ShaderStage, path: impl AsRef<Path>) -> anyhow::Result<Self> {
+    pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let source = std::fs::read_to_string(path).context("Cannot read shader source")?;
-        Self::new(stage, &source)
+        Self::new(&source)
     }
 }

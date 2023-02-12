@@ -1,9 +1,11 @@
-use std::ffi::CStr;
-use std::marker::PhantomData;
-use std::mem::ManuallyDrop;
-use std::ops::{Deref, DerefMut};
+use std::{
+    ffi::CStr,
+    marker::PhantomData,
+    mem::ManuallyDrop,
+    ops::{Deref, DerefMut}
+};
 
-use anyhow::Context;
+use eyre::{Context, Result};
 use gl::types::{GLchar, GLsizei};
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
@@ -53,12 +55,12 @@ pub enum GlError {
 }
 
 /// Utility function to catch errors as raised by OpenGL
-pub(crate) fn gl_error() -> anyhow::Result<()> {
+pub(crate) fn gl_error() -> Result<()> {
     let error = unsafe { gl::GetError() };
     if error != gl::NO_ERROR {
         Err(GlError::from_u32(error)
-            .map(|err| anyhow::anyhow!("OpenGL Error: {} (check debug log for more details)", err))
-            .unwrap_or(anyhow::anyhow!(
+            .map(|err| eyre::eyre!("OpenGL Error: {} (check debug log for more details)", err))
+            .unwrap_or(eyre::eyre!(
                 "Unknown OpenGL error (check debug log for more details)"
             )))
     } else {
@@ -67,7 +69,7 @@ pub(crate) fn gl_error() -> anyhow::Result<()> {
 }
 
 /// Utility to run a closure, checking for any OpenGL errors before returning the result
-pub fn gl_error_guard<T, F: FnOnce() -> T>(run: F) -> anyhow::Result<T> {
+pub fn gl_error_guard<T, F: FnOnce() -> T>(run: F) -> Result<T> {
     let ret = run();
     gl_error()?;
     Ok(ret)
@@ -80,7 +82,7 @@ pub fn gl_error_guard<T, F: FnOnce() -> T>(run: F) -> anyhow::Result<T> {
 #[derive(Debug)]
 pub struct GlRef<'a, T> {
     value: ManuallyDrop<T>,
-    __ref: PhantomData<&'a mut T>,
+    __ref: PhantomData<&'a T>,
 }
 
 impl<'a, T> Deref for GlRef<'a, T> {
@@ -98,7 +100,7 @@ impl<'a, T> DerefMut for GlRef<'a, T> {
 }
 
 impl<'a, T> GlRef<'a, T> {
-    pub(crate) fn create(value: T) -> Self {
+    pub(crate) const fn create(value: T) -> Self {
         Self {
             value: ManuallyDrop::new(value),
             __ref: PhantomData,

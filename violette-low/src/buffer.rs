@@ -1,28 +1,44 @@
-use std::num::NonZeroUsize;
-use std::ops::Range;
 use std::{
+    fmt,
+    fmt::Formatter,
     marker::PhantomData,
-    num::NonZeroU32,
+    num::{
+        NonZeroU32,
+        NonZeroUsize,
+    },
     ops::{Bound, RangeBounds},
+    ops::Range,
 };
 
 use bitflags::bitflags;
-use bytemuck::{cast_slice, Pod};
+use bytemuck::Pod;
+use eyre::Result;
 use gl::types::{GLbitfield, GLintptr, GLsizeiptr, GLuint};
 use num_derive::FromPrimitive;
+use num_traits::FromPrimitive;
+use once_cell::unsync::Lazy;
 
 use crate::{
-    base::bindable::{BindableExt, Binding, Resource},
+    base::resource::{Resource, ResourceExt},
     utils::gl_error_guard,
 };
 
+pub type ArrayBuffer<T> = Buffer<T, { gl::ARRAY_BUFFER }>;
+pub type ElementBuffer<T> = Buffer<T, { gl::ELEMENT_ARRAY_BUFFER }>;
+pub type UniformBuffer<T> = Buffer<T, { gl::UNIFORM_BUFFER }>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BufferId {
+pub struct BufferId<const K: u32> {
     id: NonZeroU32,
-    kind: BufferKind,
 }
 
-impl std::ops::Deref for BufferId {
+impl<const K: u32> fmt::Display for BufferId<K> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.id.get())
+    }
+}
+
+impl<const K: u32> std::ops::Deref for BufferId<K> {
     type Target = NonZeroU32;
 
     fn deref(&self) -> &Self::Target {
@@ -30,11 +46,10 @@ impl std::ops::Deref for BufferId {
     }
 }
 
-impl BufferId {
-    fn new(id: GLuint, kind: BufferKind) -> Option<Self> {
+impl<const K: u32> BufferId<K> {
+    fn new(id: GLuint) -> Option<Self> {
         Some(BufferId {
             id: NonZeroU32::new(id)?,
-            kind,
         })
     }
 }
@@ -90,61 +105,45 @@ pub enum BufferUsageHint {
 
 #[derive(Debug)]
 /// An OpenGL buffer on the GPU.
-pub struct Buffer<T> {
+pub struct Buffer<T, const K: u32> {
     __type: PhantomData<T>,
-    pub id: BufferId,
+    pub id: BufferId<K>,
     count: usize,
 }
 
-impl<T> Buffer<T> {
-    pub(crate) unsafe fn from_id(id: BufferId) -> Self {
-        let size = {
-            let mut size = 0;
-            gl::GetNamedBufferParameteriv(id.get(), gl::BUFFER_SIZE, &mut size);
-            size
-        };
-        Self {
-            __type: PhantomData,
-            id,
-            count: size as usize / std::mem::size_of::<T>(),
-        }
-    }
-}
-
-impl<T> Drop for Buffer<T> {
+impl<T, const K: u32> Drop for Buffer<T, K> {
     fn drop(&mut self) {
         unsafe { gl::DeleteBuffers(1, [self.id.get()].as_ptr()) }
     }
 }
 
-impl<'a, T: 'a> Resource<'a> for Buffer<T> {
-    type Id = BufferId;
-    type Kind = BufferKind;
-    type Bound = BoundBuffer<'a, T>;
+impl<'a, T: 'a, const K: u32> Resource<'a> for Buffer<T, K> {
+    type Id = BufferId<K>;
 
-    fn current(kind: BufferKind) -> Option<Self::Id> {
+    fn id(&self) -> Self::Id {
+        self.id
+    }
+
+    fn current() -> Option<Self::Id> {
         let mut id = 0;
         unsafe {
-            gl::GetIntegerv(kind.binding_const(), &mut id);
+            gl::GetIntegerv(BufferKind::from_u32(K).unwrap().binding_const(), &mut id);
         }
-        BufferId::new(id as _, kind)
+        BufferId::new(id as _)
     }
 
-    fn kind(&self) -> Self::Kind {
-        self.id.kind
+    fn bind(&self) {
+        tracing::trace!("glBindBuffer({:?}, {})", BufferKind::from_u32(K).unwrap(), self.id);
+        unsafe { gl::BindBuffer(K, self.id.get() as _) };
     }
 
-    fn make_binding(&'a mut self) -> anyhow::Result<Self::Bound> {
-        tracing::trace!("glBindBuffer({:?}, {})", self.kind(), self.id.get());
-        unsafe {
-            gl::BindBuffer(self.kind() as _, self.id.get() as _);
-        }
-        Ok(Self::Bound { buffer: self })
+    fn unbind(&self) {
+        unsafe { gl::BindBuffer(K, 0) };
     }
 }
 
-impl<T> Buffer<T> {
-    pub fn new(kind: BufferKind) -> Self {
+impl<T, const K: u32> Buffer<T, K> {
+    pub fn new() -> Self {
         assert!(std::mem::size_of::<T>() > 0, "Cannot allocate buffers for zero-sized types");
         let id = unsafe {
             let mut id = 0;
@@ -153,7 +152,7 @@ impl<T> Buffer<T> {
         };
         Self {
             __type: PhantomData,
-            id: BufferId::new(id, kind).unwrap(),
+            id: BufferId::new(id).unwrap(),
             count: 0,
         }
     }
@@ -165,44 +164,67 @@ impl<T> Buffer<T> {
     pub fn len(&self) -> usize {
         self.count
     }
-
-    pub fn kind(&self) -> BufferKind {
-        self.id.kind
-    }
 }
 
-impl<T: Pod> Buffer<T> {
-    pub fn with_data(kind: BufferKind, data: &[T]) -> anyhow::Result<Self> {
+impl<T: Pod, const K: u32> Buffer<T, K> {
+    pub fn with_data(data: &[T]) -> Result<Self> {
         assert!(std::mem::size_of::<T>() > 0, "Cannot allocate buffers for zero-sized types");
-        let mut this = Self::new(kind);
-        this.with_binding(|binding| {
-            binding.set(data, BufferUsageHint::Static)?;
-            Ok(())
-        })?;
+        let mut this = Self::new();
+        this.set(data, BufferUsageHint::Static)?;
         Ok(this)
     }
-}
 
-bitflags! {
-    pub struct BufferAccess: GLbitfield {
-        const PERSISTENT = gl::MAP_PERSISTENT_BIT;
-        const COHERENT = gl::MAP_COHERENT_BIT;
-        const MAP_READ = gl::MAP_READ_BIT;
-        const MAP_WRITE = gl::MAP_WRITE_BIT;
+    /// Sets GPU data.
+    pub fn set(&mut self, data: &[T], usage_hint: BufferUsageHint) -> Result<()> {
+        self.bind();
+        let bytes = if K == BufferKind::Uniform as u32 {
+            let alignment = next_multiple(std::mem::size_of::<T>(), *GL_ALIGNMENT);
+            data.iter()
+                .flat_map(|x| {
+                    let bytes = bytemuck::bytes_of(x);
+                    let padding = alignment - bytes.len();
+                    bytes
+                        .iter()
+                        .copied()
+                        .chain(std::iter::repeat(0).take(padding))
+                })
+                .collect::<Vec<_>>()
+        } else {
+            bytemuck::cast_slice(data).to_owned()
+        };
+        self.count = data.len();
+        tracing::trace!(
+            "glBufferData({:?}, {}, <bytes ptr>, {:?})",
+            BufferKind::from_u32(K).unwrap(),
+            bytes.len(),
+            usage_hint
+        );
+        gl_error_guard(|| unsafe {
+            gl::BufferData(
+                K,
+                bytes.len() as _,
+                bytes.as_ptr() as *const _,
+                usage_hint as _,
+            );
+        })?;
+        self.unbind();
+        Ok(())
     }
-}
 
-#[derive(Debug)]
-/// Bound OpenGL buffer.
-pub struct BoundBuffer<'a, T> {
-    buffer: &'a mut Buffer<T>,
-}
+    pub fn slice(&self, range: impl RangeBounds<usize>) -> BufferSlice<T, K> {
+        let range = self.byte_slice(std::mem::size_of::<T>(), range);
+        let offset = range.start as _;
+        let size = (range.end - range.start) as _;
+        BufferSlice {
+            buffer: self,
+            offset,
+            size,
+        }
+    }
 
-impl<'a, T> BoundBuffer<'a, T> {
     fn byte_slice(&self, sizeof: usize, range: impl RangeBounds<usize>) -> Range<usize> {
         tracing::debug!(range.start = ?range.start_bound(), range.end = ?range.end_bound());
-        let uniform_align = gl_alignment();
-        let alignment = next_multiple(sizeof, uniform_align);
+        let alignment = next_multiple(sizeof, *GL_ALIGNMENT);
         let start = match range.start_bound() {
             Bound::Included(i) => *i,
             Bound::Excluded(i) => (i + 1),
@@ -217,157 +239,71 @@ impl<'a, T> BoundBuffer<'a, T> {
     }
 }
 
-impl<'a, T> std::ops::Deref for BoundBuffer<'a, T> {
-    type Target = Buffer<T>;
-
-    fn deref(&self) -> &Self::Target {
-        self.buffer
+bitflags! {
+    pub struct BufferAccess: GLbitfield {
+        const PERSISTENT = gl::MAP_PERSISTENT_BIT;
+        const COHERENT = gl::MAP_COHERENT_BIT;
+        const MAP_READ = gl::MAP_READ_BIT;
+        const MAP_WRITE = gl::MAP_WRITE_BIT;
     }
 }
 
-impl<'a, T> std::ops::DerefMut for BoundBuffer<'a, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.buffer
-    }
-}
-
-impl<'a, T: 'a> Binding<'a> for BoundBuffer<'a, T> {
-    type Parent = Buffer<T>;
-
-    #[tracing::instrument(skip(self))]
-    fn unbind(&mut self, previous: Option<<Buffer<T> as Resource<'a>>::Id>) {
-        tracing::trace!("glBindBuffer({:?}, <previous>)", self.buffer.kind());
-        unsafe {
-            gl::BindBuffer(
-                self.buffer.kind() as _,
-                previous.map(|id| id.get()).unwrap_or(0),
-            );
-        }
-    }
-}
-
-impl<'a, T: Pod> BoundBuffer<'a, T> {
-    /// Sets GPU data.
-    pub fn set(&mut self, data: &[T], usage_hint: BufferUsageHint) -> anyhow::Result<()> {
-        let bytes = if self.buffer.kind() == BufferKind::Uniform {
-            let alignment = next_multiple(std::mem::size_of::<T>(), gl_alignment());
-            data.iter()
-                .flat_map(|x| {
-                    let bytes = bytemuck::bytes_of(x);
-                    let padding = alignment - bytes.len();
-                    bytes
-                        .iter()
-                        .copied()
-                        .chain(std::iter::repeat(0).take(padding))
-                })
-                .collect::<Vec<_>>()
-        } else {
-            bytemuck::cast_slice(data).to_owned()
-        };
-        self.buffer.count = data.len();
-        tracing::trace!(
-            "glBufferData({:?}, {}, <bytes ptr>, {:?})",
-            self.buffer.kind(),
-            bytes.len(),
-            usage_hint
-        );
-        unsafe {
-            gl::BufferData(
-                self.buffer.kind() as _,
-                bytes.len() as _,
-                bytes.as_ptr() as *const _,
-                usage_hint as _,
-            );
-        }
-        Ok(())
-    }
-
-    pub fn slice(&self, range: impl RangeBounds<usize>) -> BufferSlice<'a, '_, T> {
-        let range = self.byte_slice(std::mem::size_of::<T>(), range);
-        let offset = range.start as _;
-        let size = (range.end - range.start) as _;
-        tracing::debug!(?range, %size, %offset);
-        BufferSlice {
-            bound_buffer: self,
-            offset,
-            size,
-        }
-    }
-
-    pub fn slice_mut(&mut self, range: impl RangeBounds<usize>) -> BufferSliceMut<'a, '_, T> {
-        let range = self.byte_slice(std::mem::size_of::<T>(), range);
-        let offset = range.start as _;
-        let size = (range.end - range.start) as _;
-        BufferSliceMut {
-            bound_buffer: self,
-            offset,
-            size,
-        }
-    }
-}
-
-pub struct BufferSlice<'a, 'b, T> {
-    pub(crate) bound_buffer: &'b BoundBuffer<'a, T>,
+pub struct BufferSlice<'buf, T, const K: u32> {
+    pub(crate) buffer: &'buf Buffer<T, K>,
     pub(crate) offset: GLintptr,
     pub(crate) size: GLsizeiptr,
 }
 
-impl<'a, 'b, T: bytemuck::Pod> BufferSlice<'a, 'b, T> {
-    pub fn read(&self, access: BufferAccess) -> anyhow::Result<MappedBufferData<T>> {
-        let bytes = gl_error_guard(|| unsafe {
-            let access = access & !BufferAccess::MAP_WRITE;
-            let ptr = gl::MapBufferRange(
-                self.bound_buffer.buffer.kind() as _,
-                self.offset,
-                self.size,
-                access.bits,
-            );
-            std::slice::from_raw_parts(ptr as *const u8, self.size as _)
-        })?;
-        Ok(MappedBufferData {
-            __ty: PhantomData,
-            id: self.bound_buffer.id,
-            data: cast_slice(bytes),
-        })
+impl<'buf, T: bytemuck::Pod, const K: u32> BufferSlice<'buf, T, K> {
+    pub fn get(&self, access: BufferAccess) -> Result<MappedBufferData<T, K>> {
+        gl_error_guard(|| self.buffer.with_binding(|| {
+            let bytes = unsafe {
+                let access = access & !BufferAccess::MAP_WRITE;
+                let ptr = gl::MapBufferRange(
+                    K,
+                    self.offset,
+                    self.size,
+                    access.bits,
+                );
+                std::slice::from_raw_parts(ptr as *const u8, self.size as _)
+            };
+            MappedBufferData {
+                __ty: PhantomData,
+                id: self.buffer.id,
+                data: bytemuck::cast_slice(bytes),
+            }
+        }))
     }
-}
 
-pub struct BufferSliceMut<'a, 'b, T> {
-    pub(crate) bound_buffer: &'b mut BoundBuffer<'a, T>,
-    pub(crate) offset: GLintptr,
-    pub(crate) size: GLsizeiptr,
-}
-
-impl<'a, 'b, T: bytemuck::Pod> BufferSliceMut<'a, 'b, T> {
-    pub fn write(&mut self, data: &[T], access: BufferAccess) -> anyhow::Result<()> {
-        anyhow::ensure!(
+    pub fn set(&mut self, data: &[T], access: BufferAccess) -> Result<()> {
+        eyre::ensure!(
             data.len() * std::mem::size_of::<T>() == self.size as _,
             "Slice length need to equal mapped slice length"
         );
         let bytes = bytemuck::cast_slice(data);
-        gl_error_guard(|| unsafe {
+        self.buffer.with_binding(|| gl_error_guard(|| unsafe {
             let access = access | BufferAccess::MAP_READ | BufferAccess::MAP_WRITE;
             let ptr = gl::MapBufferRange(
-                self.bound_buffer.kind() as _,
+                K,
                 self.offset,
                 self.size,
                 access.bits,
             );
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, self.size as _);
-            gl::UnmapBuffer(self.bound_buffer.id.get());
-        })
+            gl::UnmapBuffer(self.buffer.id.get());
+        }))
     }
 }
 
 #[derive(Debug)]
 /// Mapped buffer data from OpenGL.
-pub struct MappedBufferData<'m, 'b, T> {
-    __ty: PhantomData<&'b ()>,
-    id: BufferId,
-    data: &'m [T],
+pub struct MappedBufferData<'data, 'buf, T, const K: u32> {
+    __ty: PhantomData<&'buf ()>,
+    id: BufferId<K>,
+    data: &'data [T],
 }
 
-impl<'m, 'b, T> std::ops::Deref for MappedBufferData<'m, 'b, T> {
+impl<'m, 'b, T, const K: u32> std::ops::Deref for MappedBufferData<'m, 'b, T, K> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
@@ -375,17 +311,17 @@ impl<'m, 'b, T> std::ops::Deref for MappedBufferData<'m, 'b, T> {
     }
 }
 
-impl<'m, 'b, T> Drop for MappedBufferData<'m, 'b, T> {
+impl<'m, 'b, T, const K: u32> Drop for MappedBufferData<'m, 'b, T, K> {
     fn drop(&mut self) {
         unsafe {
-            gl::UnmapBuffer(self.id.kind as _);
+            gl::UnmapBuffer(K);
+            gl::BindBuffer(K, 0);
         }
     }
 }
 
 #[cfg(not(feature = "fast"))]
-#[tracing::instrument]
-fn gl_alignment() -> NonZeroUsize {
+const GL_ALIGNMENT: Lazy<NonZeroUsize> = Lazy::new(|| {
     NonZeroUsize::new(
         gl_error_guard(|| unsafe {
             let mut val = 0;
@@ -396,14 +332,14 @@ fn gl_alignment() -> NonZeroUsize {
             );
             val as usize
         })
-        .unwrap(),
+            .unwrap(),
     )
-    .unwrap()
-}
+        .unwrap()
+});
+
 
 #[cfg(feature = "fast")]
-#[tracing::instrument]
-fn gl_alignment() -> NonZeroUsize {
+const GL_ALIGNMENT: Lazy<NonZeroUsize> = Lazy::new(|| {
     unsafe {
         let mut val = 0;
         gl::GetIntegerv(gl::UNIFORM_BUFFER_OFFSET_ALIGNMENT, &mut val);
@@ -413,7 +349,7 @@ fn gl_alignment() -> NonZeroUsize {
         );
         NonZeroUsize::new_unchecked(val as _)
     }
-}
+});
 
 #[inline(always)]
 fn next_multiple(x: usize, of: NonZeroUsize) -> usize {

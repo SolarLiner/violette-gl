@@ -1,23 +1,36 @@
-use std::ops::{Range, RangeBounds};
+use std::{
+    fmt::{
+        self,
+        Formatter,
+    },
+    ops::{Range, RangeBounds},
+};
 
 use bitflags::bitflags;
+use eyre::Result;
 use gl::types::*;
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
 use crate::{
-    base::{
-        bindable::{Binding, Resource, BindGuard, BindableExt},
-        GlType,
-    },
-    buffer::BoundBuffer,
-    texture::{BoundTexture, DepthStencil, Dimension, Texture, TextureId},
+    base::resource::Resource,
+    texture::{DepthStencil, Dimension, Texture},
     utils::gl_error_guard,
-    vertex::{BoundVao, DrawMode},
+    vertex::DrawMode,
 };
+use crate::base::resource::ResourceExt;
+use crate::program::Program;
+use crate::utils::GlRef;
+use crate::vertex::VertexArray;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FramebufferId(u32);
+
+impl fmt::Display for FramebufferId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 impl std::ops::Deref for FramebufferId {
     type Target = u32;
@@ -148,6 +161,7 @@ pub enum FramebufferStatus {
 #[derive(Debug)]
 pub struct Framebuffer {
     id: FramebufferId,
+
 }
 
 impl std::ops::Deref for Framebuffer {
@@ -160,17 +174,15 @@ impl std::ops::Deref for Framebuffer {
 
 impl Drop for Framebuffer {
     fn drop(&mut self) {
-        if self.id.0 > 0 {
-            unsafe { gl::DeleteFramebuffers(1, &*self.id) }
-        }
+        unsafe { gl::DeleteFramebuffers(1, &*self.id) }
     }
 }
 
 impl Framebuffer {
-    pub const fn backbuffer() -> Self {
-        Self {
+    pub const fn backbuffer() -> GlRef<'static, Self> {
+        GlRef::create(Self {
             id: FramebufferId::BACKBUFFER,
-        }
+        })
     }
 
     pub fn new() -> Framebuffer {
@@ -188,11 +200,11 @@ impl Framebuffer {
 impl<'a> Resource<'a> for Framebuffer {
     type Id = FramebufferId;
 
-    type Kind = ();
+    fn id(&self) -> Self::Id {
+        self.id
+    }
 
-    type Bound = BoundFB<'a>;
-
-    fn current((): ()) -> Option<Self::Id> {
+    fn current() -> Option<Self::Id> {
         let mut id = 0;
         unsafe {
             gl::GetIntegerv(gl::FRAMEBUFFER_BINDING, &mut id);
@@ -200,87 +212,64 @@ impl<'a> Resource<'a> for Framebuffer {
         Some(FramebufferId(id as _))
     }
 
-    fn kind(&self) -> Self::Kind {}
-
-    fn make_binding(&'a mut self) -> anyhow::Result<Self::Bound> {
-        if Self::current(()) != Some(self.id) {
-            unsafe {
-                gl::BindFramebuffer(gl::FRAMEBUFFER, self.id.0 as _);
-            }
-        }
-        Ok(BoundFB { fb: self })
-    }
-}
-
-pub struct BoundFB<'a> {
-    fb: &'a Framebuffer,
-}
-
-impl<'a> std::ops::Deref for BoundFB<'a> {
-    type Target = Framebuffer;
-
-    fn deref(&self) -> &Self::Target {
-        self.fb
-    }
-}
-
-impl<'a> Binding<'a> for BoundFB<'a> {
-    type Parent = Framebuffer;
-
-    fn unbind(&mut self, previous: Option<FramebufferId>) {
+    fn bind(&self) {
         unsafe {
-            gl::BindFramebuffer(gl::FRAMEBUFFER, previous.map(|id| id.0).unwrap_or(0));
+            gl::BindFramebuffer(gl::FRAMEBUFFER, self.id.0 as _);
         }
+    }
+
+    fn unbind(&self) {
+        unsafe { gl::BindFramebuffer(gl::FRAMEBUFFER, 0) }
     }
 }
 
-impl<'a> BoundFB<'a> {
+impl Framebuffer {
     pub fn viewport(&self, x: usize, y: usize, width: usize, height: usize) {
-        unsafe {
+        self.with_binding(|| unsafe {
             gl::Viewport(x as _, y as _, width as _, height as _);
-        }
+        })
     }
 
-    pub fn clear_color(&mut self, [red, green, blue, alpha]: [f32; 4]) {
-        unsafe { gl::ClearColor(red, green, blue, alpha) }
+    pub fn clear_color(&self, [red, green, blue, alpha]: [f32; 4]) -> Result<()> {
+        gl_error_guard(|| self.with_binding(|| unsafe { gl::ClearColor(red, green, blue, alpha) }))
     }
 
-    pub fn clear_depth(&mut self, value: f64) {
-        unsafe {
+    pub fn clear_depth(&self, value: f64) -> Result<()> {
+        gl_error_guard(|| self.with_binding(|| unsafe {
             gl::ClearDepth(value);
-        }
+        }))
     }
 
-    pub fn do_clear(&mut self, mode: ClearBuffer) -> anyhow::Result<()> {
-        gl_error_guard(|| unsafe {
+    pub fn do_clear(&self, mode: ClearBuffer) -> Result<()> {
+        self.with_binding(|| gl_error_guard(|| unsafe {
             gl::Clear(mode.bits());
-        })
+        }))
     }
 
-    pub fn set_feature(&mut self, feature: FramebufferFeature) -> anyhow::Result<()> {
-        gl_error_guard(|| unsafe {
+    pub fn set_feature(&self, feature: FramebufferFeature) -> Result<()> {
+        self.with_binding(|| gl_error_guard(|| unsafe {
             feature.set();
-        })
+        }))
     }
 
-    pub fn enable_features(&mut self, features: FramebufferFeatureId) -> anyhow::Result<()> {
-        gl_error_guard(|| unsafe {
+    pub fn enable_features(&self, features: FramebufferFeatureId) -> Result<()> {
+        self.with_binding(|| gl_error_guard(|| unsafe {
             for feature in FramebufferFeatureId::ALL_FEATURES.into_iter().filter(|&f| features.contains(f)) {
                 gl::Enable(feature.gl_id());
             }
-        })
+        }))
     }
 
-    pub fn disable_features(&mut self, features: FramebufferFeatureId) -> anyhow::Result<()> {
-        gl_error_guard(|| unsafe {
+    pub fn disable_features(&self, features: FramebufferFeatureId) -> Result<()> {
+        self.with_binding(|| gl_error_guard(|| unsafe {
             for feature in FramebufferFeatureId::ALL_FEATURES.into_iter().filter(|&f| features.contains(f)) {
                 gl::Disable(feature.gl_id());
             }
-        })
+        }))
     }
 
-    pub fn features(&mut self, features: FramebufferFeatureId) -> anyhow::Result<()> {
-        gl_error_guard(|| unsafe {
+    pub fn features(&self, features: FramebufferFeatureId) -> Result<()> {
+        self.with_binding(|| gl_error_guard(|| unsafe {
             for feature in FramebufferFeatureId::ALL_FEATURES {
                 if features.contains(feature) {
                     gl::Enable(feature.gl_id());
@@ -288,159 +277,145 @@ impl<'a> BoundFB<'a> {
                     gl::Disable(feature.gl_id());
                 }
             }
-        })
+        }))
     }
 
     pub fn draw(
-        &mut self,
-        _vao_binding: &mut BoundVao,
+        &self,
+        program: &Program,
+        vao: &VertexArray,
         mode: DrawMode,
         vertices: Range<i32>,
-    ) -> anyhow::Result<()> {
-        gl_error_guard(|| unsafe {
+    ) -> Result<()> {
+        gl_error_guard(|| program.with_binding(|| self.with_binding(|| vao.with_binding(|| unsafe {
             gl::DrawArrays(mode as _, vertices.start, vertices.end - vertices.start);
-        })
+        }))))
     }
 
-    pub fn draw_elements<I: GlType, B: RangeBounds<i32>>(
-        &mut self,
-        _vao_binding: &mut BoundVao,
-        buffer: &BoundBuffer<I>,
+    pub fn draw_elements(
+        &self,
+        program: &Program,
+        vao: &VertexArray,
         mode: DrawMode,
-        slice: B,
-    ) -> anyhow::Result<()> {
-        let slice = normalize_range(slice, 0..buffer.len() as _);
+        slice: impl RangeBounds<i32>,
+    ) -> Result<()> {
+        eyre::ensure!(vao.element.is_some(), "Vertex Array Object needs to be bound to an Element Buffer");
+        let (gl_type, len) = vao.element.unwrap();
+        let slice = normalize_range(slice, 0..len as _);
         let count = slice.end - slice.start;
-        gl_error_guard(|| unsafe {
-            gl::DrawElements(mode as _, count, I::GL_TYPE, std::ptr::null());
-        })
+        gl_error_guard(|| self.with_binding(|| program.with_binding(||
+            vao.with_binding(||
+                unsafe {
+                    gl::DrawElements(gl::TRIANGLES, count, gl::UNSIGNED_INT, std::ptr::null());
+                }))))
     }
 
-    pub fn attach_color<F>(&mut self, attachment: u8, texture: &Texture<F>) -> anyhow::Result<()> {
+    pub fn attach_color<F>(&mut self, attachment: u8, texture: &Texture<F>) -> Result<()> {
         tracing::trace!("glFramebufferTexture{}D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT_{}, GL_TEXTURE_{}D, {}, 0)",
             texture.dimension().num_dimension(), attachment, texture.dimension().num_dimension(), texture.raw_id());
-        gl_error_guard(|| unsafe {
-            gl::FramebufferTexture(
-                gl::FRAMEBUFFER,
-                gl::COLOR_ATTACHMENT0 + attachment as GLenum,
-                texture.raw_id(),
-                0,
-            );
-            // match texture.dimension() {
-            //     Dimension::D1 => gl::FramebufferTexture1D(
-            //         gl::FRAMEBUFFER,
-            //         gl::COLOR_ATTACHMENT0 + attachment as GLuint,
-            //         gl::TEXTURE_1D,
-            //         texture.id(),
-            //         0,
-            //     ),
-            //     Dimension::D2 => gl::FramebufferTexture2D(
-            //         gl::FRAMEBUFFER,
-            //         gl::COLOR_ATTACHMENT0 + attachment as GLuint,
-            //         gl::TEXTURE_2D,
-            //         texture.id(),
-            //         0,
-            //     ),
-            //     Dimension::D3 => gl::FramebufferTexture3D(
-            //         gl::FRAMEBUFFER,
-            //         gl::COLOR_ATTACHMENT0 + attachment as GLuint,
-            //         gl::TEXTURE_3D,
-            //         texture.id(),
-            //         0,
-            //         0,
-            //     ),
-            //     _ => panic!("Only 1D, 2D or 3D textures can be bound to framebuffers"),
-            // }
-        })
+        self.with_binding(||
+            gl_error_guard(|| unsafe {
+                gl::FramebufferTexture(
+                    gl::FRAMEBUFFER,
+                    gl::COLOR_ATTACHMENT0 + attachment as GLenum,
+                    texture.raw_id(),
+                    0,
+                );
+            }))
     }
 
     pub fn attach_depth<D, S>(
         &mut self,
         texture: &Texture<DepthStencil<D, S>>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         tracing::trace!(
             "glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_{}D, {}, 0)",
             texture.dimension().num_dimension(),
             texture.raw_id()
         );
-        gl_error_guard(|| unsafe {
-            match texture.dimension() {
-                Dimension::D1 => gl::FramebufferTexture2D(
-                    gl::FRAMEBUFFER,
-                    gl::DEPTH_ATTACHMENT,
-                    gl::TEXTURE_1D,
-                    texture.raw_id(),
-                    0,
-                ),
-                Dimension::D2 => gl::FramebufferTexture2D(
-                    gl::FRAMEBUFFER,
-                    gl::DEPTH_ATTACHMENT,
-                    gl::TEXTURE_2D,
-                    texture.raw_id(),
-                    0,
-                ),
-                Dimension::D3 => gl::FramebufferTexture3D(
-                    gl::FRAMEBUFFER,
-                    gl::DEPTH_ATTACHMENT,
-                    gl::TEXTURE_3D,
-                    texture.raw_id(),
-                    0,
-                    0,
-                ),
-                _ => panic!("Only 1D, 2D or 3D texture can be attached into the depth slot"),
-            }
-        })
+        gl_error_guard(|| self.with_binding(||
+            unsafe {
+                match texture.dimension() {
+                    Dimension::D1 => gl::FramebufferTexture2D(
+                        gl::FRAMEBUFFER,
+                        gl::DEPTH_ATTACHMENT,
+                        gl::TEXTURE_1D,
+                        texture.raw_id(),
+                        0,
+                    ),
+                    Dimension::D2 => gl::FramebufferTexture2D(
+                        gl::FRAMEBUFFER,
+                        gl::DEPTH_ATTACHMENT,
+                        gl::TEXTURE_2D,
+                        texture.raw_id(),
+                        0,
+                    ),
+                    Dimension::D3 => gl::FramebufferTexture3D(
+                        gl::FRAMEBUFFER,
+                        gl::DEPTH_ATTACHMENT,
+                        gl::TEXTURE_3D,
+                        texture.raw_id(),
+                        0,
+                        0,
+                    ),
+                    _ => panic!("Only 1D, 2D or 3D texture can be attached into the depth slot"),
+                }
+            }))
     }
 
     pub fn attach_depth_stencil<D, S>(
         &mut self,
-        texture: &BoundTexture<DepthStencil<D, S>>,
-    ) -> anyhow::Result<()> {
-        gl_error_guard(|| unsafe {
-            match texture.dimension() {
-                Dimension::D1 => gl::FramebufferTexture2D(
-                    gl::FRAMEBUFFER,
-                    gl::DEPTH_STENCIL_ATTACHMENT,
-                    gl::TEXTURE_1D,
-                    texture.raw_id(),
-                    0,
-                ),
-                Dimension::D2 => gl::FramebufferTexture2D(
-                    gl::FRAMEBUFFER,
-                    gl::DEPTH_STENCIL_ATTACHMENT,
-                    gl::TEXTURE_2D,
-                    texture.raw_id(),
-                    0,
-                ),
-                Dimension::D3 => gl::FramebufferTexture3D(
-                    gl::FRAMEBUFFER,
-                    gl::DEPTH_STENCIL_ATTACHMENT,
-                    gl::TEXTURE_3D,
-                    texture.raw_id(),
-                    0,
-                    0,
-                ),
-                _ => panic!("Only 1D, 2D or 3D texture can be attached into the depth slot"),
-            }
-        })
+        texture: &Texture<DepthStencil<D, S>>,
+    ) -> Result<()> {
+        gl_error_guard(|| self.with_binding(||
+            unsafe {
+                match texture.dimension() {
+                    Dimension::D1 => gl::FramebufferTexture2D(
+                        gl::FRAMEBUFFER,
+                        gl::DEPTH_STENCIL_ATTACHMENT,
+                        gl::TEXTURE_1D,
+                        texture.raw_id(),
+                        0,
+                    ),
+                    Dimension::D2 => gl::FramebufferTexture2D(
+                        gl::FRAMEBUFFER,
+                        gl::DEPTH_STENCIL_ATTACHMENT,
+                        gl::TEXTURE_2D,
+                        texture.raw_id(),
+                        0,
+                    ),
+                    Dimension::D3 => gl::FramebufferTexture3D(
+                        gl::FRAMEBUFFER,
+                        gl::DEPTH_STENCIL_ATTACHMENT,
+                        gl::TEXTURE_3D,
+                        texture.raw_id(),
+                        0,
+                        0,
+                    ),
+                    _ => panic!("Only 1D, 2D or 3D texture can be attached into the depth slot"),
+                }
+            }))
     }
 
-    pub fn enable_buffers(&mut self, attachments: impl IntoIterator<Item=u32>) -> anyhow::Result<()> {
+    pub fn enable_buffers(&mut self, attachments: impl IntoIterator<Item=u32>) -> Result<()> {
         let symbols = attachments.into_iter().map(|ix| gl::COLOR_ATTACHMENT0 + ix).collect::<Vec<_>>();
-        gl_error_guard(|| unsafe {
-            gl::DrawBuffers(symbols.len() as _, symbols.as_ptr());
-        })
+        gl_error_guard(|| self.with_binding(||
+            unsafe {
+                gl::DrawBuffers(symbols.len() as _, symbols.as_ptr());
+            }))
     }
 
     pub fn check_status(&self) -> FramebufferStatus {
-        let value = unsafe { gl::CheckFramebufferStatus(gl::DRAW_FRAMEBUFFER) };
-        FramebufferStatus::from_u32(value).unwrap()
+        self.with_binding(|| {
+            let value = unsafe { gl::CheckFramebufferStatus(gl::DRAW_FRAMEBUFFER) };
+            FramebufferStatus::from_u32(value).unwrap()
+        })
     }
 
-    pub fn assert_complete(&self) -> anyhow::Result<()> {
+    pub fn assert_complete(&self) -> Result<()> {
         match self.check_status() {
             FramebufferStatus::Complete => Ok(()),
-            status => anyhow::bail!("Framebuffer not valid: {:?}", status),
+            status => eyre::bail!("Framebuffer not valid: {:?}", status),
         }
     }
 }
