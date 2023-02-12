@@ -287,6 +287,7 @@ impl Framebuffer {
         mode: DrawMode,
         vertices: Range<i32>,
     ) -> Result<()> {
+        tracing::debug!("Draw on FBO {} with program {} and VAO {}", self.id, program.id(), vao.id());
         gl_error_guard(|| program.with_binding(|| self.with_binding(|| vao.with_binding(|| unsafe {
             gl::DrawArrays(mode as _, vertices.start, vertices.end - vertices.start);
         }))))
@@ -300,7 +301,7 @@ impl Framebuffer {
         slice: impl RangeBounds<i32>,
     ) -> Result<()> {
         let Some((gl_type, len)) = vao.element else { eyre::bail!( "Vertex Array Object needs to be bound to an Element Buffer") };
-        program.get_attributes().for_each(|attr| tracing::info!(attribute=?attr));
+        tracing::debug!("Draw elements on FBO {} with program {} and VAO {}", self.id, program.id(), vao.id());
         let slice = normalize_range(slice, 0..len as _);
         let count = slice.end - slice.start;
         gl_error_guard(|| self.with_binding(|| program.with_binding(||
@@ -310,7 +311,7 @@ impl Framebuffer {
                 }))))
     }
 
-    pub fn attach_color<F>(&mut self, attachment: u8, texture: &Texture<F>) -> Result<()> {
+    pub fn attach_color<F>(&self, attachment: u8, texture: &Texture<F>) -> Result<()> {
         tracing::trace!("glFramebufferTexture{}D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT_{}, GL_TEXTURE_{}D, {}, 0)",
             texture.dimension().num_dimension(), attachment, texture.dimension().num_dimension(), texture.raw_id());
         self.with_binding(||

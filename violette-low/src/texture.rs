@@ -301,10 +301,11 @@ impl Uniform for TextureUnit {
 #[derive(Debug)]
 pub struct Texture<F> {
     __fmt: PhantomData<F>,
-    width: u32,
-    height: u32,
-    depth: u32,
+    width: NonZeroU32,
+    height: NonZeroU32,
+    depth: NonZeroU32,
     id: TextureId,
+    has_mipmaps: bool,
     unit: Option<GLenum>,
 }
 
@@ -329,14 +330,14 @@ impl<'a, F: 'a> Resource<'a> for Texture<F> {
 }
 
 impl<F> Texture<F> {
-    pub fn new(width: u32, height: u32, depth: u32, dim: Dimension) -> Self {
+    pub fn new(width: NonZeroU32, height: NonZeroU32, depth: NonZeroU32, dim: Dimension) -> Self {
         Self::new_multisampled(width, height, depth, dim, NonZeroU32::new(1).unwrap())
     }
 
     pub fn new_multisampled(
-        width: u32,
-        height: u32,
-        depth: u32,
+        width: NonZeroU32,
+        height: NonZeroU32,
+        depth: NonZeroU32,
         dim: Dimension,
         samples: NonZeroU32,
     ) -> Self {
@@ -347,6 +348,7 @@ impl<F> Texture<F> {
             width,
             height,
             depth,
+            has_mipmaps: false,
             id: TextureId::new(id, TextureTarget { dim, samples }).unwrap(),
             unit: None,
         }
@@ -374,19 +376,43 @@ impl<F> Texture<F> {
         self.id
     }
 
+    pub fn mipmap_size(&self, mipmap: usize) -> Result<(NonZeroU32, NonZeroU32)> {
+        let mut width = 0;
+        let mut height = 0;
+        gl_error_guard(|| unsafe {
+            gl::GetTexLevelParameteriv(self.id.target.gl_target(), mipmap as _, gl::TEXTURE_WIDTH, &mut width);
+            gl::GetTexLevelParameteriv(self.id.target.gl_target(), mipmap as _, gl::TEXTURE_HEIGHT, &mut height);
+        })?;
+        let Some(width) = NonZeroU32::new(width as _) else { eyre::bail!("Zero texture size");};
+        let Some(height) = NonZeroU32::new(height as _) else { eyre::bail!("Zero texture size");};
+        Ok((width, height))
+    }
+
+    pub fn num_mipmaps(&self) -> usize {
+        let n = if self.has_mipmaps {
+            f32::log2(self.width.max(self.height).max(self.depth).get() as _).floor() as usize 
+        } else {
+            0
+        };
+        1 + n
+    }
+
     pub(crate) fn raw_id(&self) -> u32 {
         self.id.get()
     }
 }
 
 impl<F: TextureFormat> Texture<F> {
-    pub fn from_2d_pixels(width: usize, data: &[F::Subpixel]) -> Result<Self> {
+    pub fn from_2d_pixels(width: NonZeroU32, data: &[F::Subpixel]) -> Result<Self> {
+        let Some(len) = NonZeroU32::new(data.len() as _) else {
+            eyre::bail!("Cannot create empty texture");
+        };
         eyre::ensure!(
-            (data.len() / F::COUNT) % width == 0,
+            (data.len() / F::COUNT) % width.get() as usize == 0,
             "Data slice must be a rectangular array of pixels"
         );
-        let height = data.len() / F::COUNT / width;
-        let mut this = Self::new(width as _, height as _, 1, Dimension::D2);
+        let height = NonZeroU32::new(len.get() / F::COUNT as u32 / width.get()).unwrap();
+        let mut this = Self::new(width as _, height as _, NonZeroU32::new(1).unwrap(), Dimension::D2);
         this.set_data(data)?;
         Ok(this)
     }
@@ -402,7 +428,7 @@ impl<F: TextureFormat> Texture<F> {
             P::Subpixel: GlType + Pod,
     {
         image::imageops::flip_vertical_in_place(&mut image);
-        Self::from_2d_pixels(image.width() as _, image.as_raw())
+        Self::from_2d_pixels(image.width().try_into()?, image.as_raw())
     }
 }
 
@@ -441,14 +467,14 @@ impl Texture<[f32; 2]> {
                 [r, g]
             })
             .collect::<Vec<_>>();
-        Self::from_2d_pixels(img.width() as usize, &data).context("Cannot upload texture")
+        Self::from_2d_pixels(img.width().try_into()?, &data).context("Cannot upload texture")
     }
 }
 
-impl<'a, F: TextureFormat> Texture<F> {
+impl<F: TextureFormat> Texture<F> {
     // TODO: Support Non-2D textures
     #[tracing::instrument(skip_all)]
-    pub fn reserve_memory(&mut self) -> Result<()> {
+    pub fn reserve_memory(&self) -> Result<()> {
         eyre::ensure!(
             self.id.target.dim == Dimension::D2,
             "Non-2D texture not supported at the moment"
@@ -465,8 +491,8 @@ impl<'a, F: TextureFormat> Texture<F> {
                 self.id.target.gl_target(),
                 0,
                 F::INTERNAL_FORMAT as _,
-                self.width as _,
-                self.height as _,
+                self.width.get() as _,
+                self.height.get() as _,
                 0,
                 F::FORMAT,
                 F::Subpixel::GL_TYPE,
@@ -476,9 +502,11 @@ impl<'a, F: TextureFormat> Texture<F> {
     }
 
     pub fn set_data(&mut self, data: &[F::Subpixel]) -> Result<()> {
+        let Some(len) = NonZeroU32::new(data.len() as _) else { eyre::bail!("Cannot set empty data"); };
         eyre::ensure!(
-            self.width * self.height * self.depth * F::COUNT as u32
-                == data.len() as _,
+            // self.width * self.height * self.depth * F::COUNT as u32
+            self.width.checked_mul(self.height).unwrap().checked_mul(NonZeroU32::new(F::COUNT as _).unwrap()).unwrap()
+                == len,
             "Data length has to match the extents of the texture"
         );
 
@@ -490,8 +518,8 @@ impl<'a, F: TextureFormat> Texture<F> {
                     self.id.target.gl_target(),
                     0,
                     F::INTERNAL_FORMAT as _,
-                    self.width as _,
-                    self.height as _,
+                    self.width.get() as _,
+                    self.height.get() as _,
                     0,
                     F::FORMAT,
                     F::Subpixel::GL_TYPE,
@@ -501,8 +529,8 @@ impl<'a, F: TextureFormat> Texture<F> {
                     self.id.target.gl_target(),
                     self.id.target.samples.get() as _,
                     F::INTERNAL_FORMAT as _,
-                    self.width as _,
-                    self.height as _,
+                    self.width.get() as _,
+                    self.height.get() as _,
                     gl::TRUE,
                 ),
                 _ => todo!(),
@@ -515,40 +543,40 @@ impl<'a, F: TextureFormat> Texture<F> {
     pub fn generate_mipmaps(&mut self) -> Result<()> {
         gl_error_guard(|| self.with_binding(|| unsafe {
             gl::GenerateMipmap(self.id.target.gl_target());
-        }))
+        }))?;
+        self.has_mipmaps = true;
+        Ok(())
     }
 
-    pub fn clear_resize(&mut self, width: u32, height: u32, depth: u32) -> Result<()> {
-        self.bind();
+    pub fn clear_resize(&mut self, width: NonZeroU32, height: NonZeroU32, depth: NonZeroU32) -> Result<()> {
         self.width = width;
         self.height = height;
         self.depth = depth;
         self.reserve_memory()
             .context("Failed to reserve memory following clear")?;
         self.generate_mipmaps().context("Cannot generate texture mipmaps")?;
-        self.unbind();
         Ok(())
     }
 
-    pub fn wrap_s(&mut self, wrap: TextureWrap) -> Result<()> {
+    pub fn wrap_s(&self, wrap: TextureWrap) -> Result<()> {
         gl_error_guard(|| self.with_binding(|| unsafe {
             gl::TexParameteri(self.id.target.gl_target(), gl::TEXTURE_WRAP_S, wrap as _);
         }))
     }
 
-    pub fn wrap_t(&mut self, wrap: TextureWrap) -> Result<()> {
+    pub fn wrap_t(&self, wrap: TextureWrap) -> Result<()> {
         gl_error_guard(|| self.with_binding(|| unsafe {
             gl::TexParameteri(self.id.target.gl_target(), gl::TEXTURE_WRAP_T, wrap as _);
         }))
     }
 
-    pub fn wrap_r(&mut self, wrap: TextureWrap) -> Result<()> {
+    pub fn wrap_r(&self, wrap: TextureWrap) -> Result<()> {
         gl_error_guard(|| self.with_binding(|| unsafe {
             gl::TexParameteri(self.id.target.gl_target(), gl::TEXTURE_WRAP_R, wrap as _);
         }))
     }
 
-    pub fn filter_min(&mut self, param: SampleMode) -> Result<()> {
+    pub fn filter_min(&self, param: SampleMode) -> Result<()> {
         gl_error_guard(|| self.with_binding(|| unsafe {
             gl::TexParameteri(
                 self.id.target.gl_target(),
@@ -559,7 +587,7 @@ impl<'a, F: TextureFormat> Texture<F> {
     }
 
     pub fn filter_min_mipmap(
-        &mut self,
+        &self,
         mipmap: SampleMode,
         texture: SampleMode,
     ) -> Result<()> {
@@ -579,7 +607,7 @@ impl<'a, F: TextureFormat> Texture<F> {
         }))
     }
 
-    pub fn filter_mag(&mut self, mode: SampleMode) -> Result<()> {
+    pub fn filter_mag(&self, mode: SampleMode) -> Result<()> {
         gl_error_guard(|| self.with_binding(|| unsafe {
             gl::TexParameteri(
                 self.id.target.gl_target(),
@@ -587,5 +615,29 @@ impl<'a, F: TextureFormat> Texture<F> {
                 mode as _,
             )
         }))
+    }
+
+    pub fn get_mipmap(&self, mipmap: usize) -> Result<Vec<F::Subpixel>> {
+        self.with_binding(|| {
+            gl_error_guard(|| {
+                unsafe {
+                    let mut size = 0;
+                    gl::GetTexLevelParameteriv(self.id.target.gl_target(), mipmap as _, gl::TEXTURE_BUFFER_SIZE, &mut size);
+
+                    let mut data = vec![0u8; size as _];
+                    gl::GetTexImage(self.id.target.gl_target(), mipmap as _, F::FORMAT, F::INTERNAL_FORMAT, data.as_mut_ptr().cast());
+
+                    bytemuck::cast_vec(data)
+                }
+            })
+        })
+    }
+
+    #[cfg(feature = "img")]
+    pub fn get_mipmap_img<P: image::Pixel<Subpixel=F::Subpixel>>(&self, mipmap: usize) -> Result<image::ImageBuffer<P, Vec<P::Subpixel>>> {
+        let data = self.get_mipmap(mipmap)?;
+        let (width, height) = self.mipmap_size(mipmap)?;
+        let Some(img) = image::ImageBuffer::from_vec(width.get(), height.get(), data) else { eyre::bail!("Cannot create image from data") };
+        Ok(img)
     }
 }

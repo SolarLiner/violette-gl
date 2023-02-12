@@ -1,13 +1,8 @@
 use std::{
-    fmt,
-    fmt::Formatter,
+    fmt::{self, Formatter},
     marker::PhantomData,
-    num::{
-        NonZeroU32,
-        NonZeroUsize,
-    },
-    ops::{Bound, RangeBounds},
-    ops::Range,
+    num::{NonZeroU32, NonZeroUsize},
+    ops::{Range, Bound, RangeBounds},
 };
 
 use bitflags::bitflags;
@@ -16,7 +11,7 @@ use eyre::Result;
 use gl::types::{GLbitfield, GLintptr, GLsizeiptr, GLuint};
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
-use once_cell::unsync::Lazy;
+use once_cell::sync::Lazy;
 
 use crate::{
     base::resource::{Resource, ResourceExt},
@@ -113,6 +108,7 @@ pub struct Buffer<T, const K: u32> {
 
 impl<T, const K: u32> Drop for Buffer<T, K> {
     fn drop(&mut self) {
+        tracing::debug!("Delete buffer {}", self.id);
         unsafe { gl::DeleteBuffers(1, [self.id.get()].as_ptr()) }
     }
 }
@@ -133,23 +129,33 @@ impl<'a, T: 'a, const K: u32> Resource<'a> for Buffer<T, K> {
     }
 
     fn bind(&self) {
-        tracing::trace!("glBindBuffer({:?}, {})", BufferKind::from_u32(K).unwrap(), self.id);
+        tracing::trace!(
+            "glBindBuffer({:?}, {})",
+            BufferKind::from_u32(K).unwrap(),
+            self.id
+        );
         unsafe { gl::BindBuffer(K, self.id.get() as _) };
     }
 
     fn unbind(&self) {
+        tracing::trace!("glBindBuffer({:?}, 0)", BufferKind::from_u32(K).unwrap());
         unsafe { gl::BindBuffer(K, 0) };
     }
 }
 
+#[allow(clippy::new_without_default)]
 impl<T, const K: u32> Buffer<T, K> {
     pub fn new() -> Self {
-        assert!(std::mem::size_of::<T>() > 0, "Cannot allocate buffers for zero-sized types");
+        assert!(
+            std::mem::size_of::<T>() > 0,
+            "Cannot allocate buffers for zero-sized types"
+        );
         let id = unsafe {
             let mut id = 0;
             gl::GenBuffers(1, &mut id);
             id
         };
+        tracing::debug!("Create buffer {}", id);
         Self {
             __type: PhantomData,
             id: BufferId::new(id).unwrap(),
@@ -168,7 +174,10 @@ impl<T, const K: u32> Buffer<T, K> {
 
 impl<T: Pod, const K: u32> Buffer<T, K> {
     pub fn with_data(data: &[T]) -> Result<Self> {
-        assert!(std::mem::size_of::<T>() > 0, "Cannot allocate buffers for zero-sized types");
+        assert!(
+            std::mem::size_of::<T>() > 0,
+            "Cannot allocate buffers for zero-sized types"
+        );
         let mut this = Self::new();
         this.set(data, BufferUsageHint::Static)?;
         Ok(this)
@@ -256,23 +265,26 @@ pub struct BufferSlice<'buf, T, const K: u32> {
 
 impl<'buf, T: bytemuck::Pod, const K: u32> BufferSlice<'buf, T, K> {
     pub fn get(&self, access: BufferAccess) -> Result<MappedBufferData<T, K>> {
-        gl_error_guard(|| self.buffer.with_binding(|| {
-            let bytes = unsafe {
-                let access = access & !BufferAccess::MAP_WRITE;
-                let ptr = gl::MapBufferRange(
-                    K,
+        gl_error_guard(|| {
+            self.buffer.with_binding(|| {
+                let bytes = unsafe {
+                    let access = access & !BufferAccess::MAP_WRITE;
+                    let ptr = gl::MapBufferRange(K, self.offset, self.size, access.bits);
+                    std::slice::from_raw_parts(ptr as *const u8, self.size as _)
+                };
+                tracing::debug!(
+                    "Map buffer {} ({}..{})",
+                    self.buffer.id,
                     self.offset,
-                    self.size,
-                    access.bits,
+                    self.offset + self.size
                 );
-                std::slice::from_raw_parts(ptr as *const u8, self.size as _)
-            };
-            MappedBufferData {
-                __ty: PhantomData,
-                id: self.buffer.id,
-                data: bytemuck::cast_slice(bytes),
-            }
-        }))
+                MappedBufferData {
+                    __ty: PhantomData,
+                    id: self.buffer.id,
+                    data: bytemuck::cast_slice(bytes),
+                }
+            })
+        })
     }
 
     pub fn set(&mut self, data: &[T], access: BufferAccess) -> Result<()> {
@@ -281,17 +293,14 @@ impl<'buf, T: bytemuck::Pod, const K: u32> BufferSlice<'buf, T, K> {
             "Slice length need to equal mapped slice length"
         );
         let bytes = bytemuck::cast_slice(data);
-        self.buffer.with_binding(|| gl_error_guard(|| unsafe {
-            let access = access | BufferAccess::MAP_READ | BufferAccess::MAP_WRITE;
-            let ptr = gl::MapBufferRange(
-                K,
-                self.offset,
-                self.size,
-                access.bits,
-            );
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, self.size as _);
-            gl::UnmapBuffer(self.buffer.id.get());
-        }))
+        self.buffer.with_binding(|| {
+            gl_error_guard(|| unsafe {
+                let access = access | BufferAccess::MAP_READ | BufferAccess::MAP_WRITE;
+                let ptr = gl::MapBufferRange(K, self.offset, self.size, access.bits);
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, self.size as _);
+                gl::UnmapBuffer(self.buffer.id.get());
+            })
+        })
     }
 }
 
@@ -313,6 +322,7 @@ impl<'m, 'b, T, const K: u32> std::ops::Deref for MappedBufferData<'m, 'b, T, K>
 
 impl<'m, 'b, T, const K: u32> Drop for MappedBufferData<'m, 'b, T, K> {
     fn drop(&mut self) {
+        tracing::debug!("Unmap buffer {}", self.id);
         unsafe {
             gl::UnmapBuffer(K);
             gl::BindBuffer(K, 0);
@@ -321,7 +331,7 @@ impl<'m, 'b, T, const K: u32> Drop for MappedBufferData<'m, 'b, T, K> {
 }
 
 #[cfg(not(feature = "fast"))]
-const GL_ALIGNMENT: Lazy<NonZeroUsize> = Lazy::new(|| {
+static GL_ALIGNMENT: Lazy<NonZeroUsize> = Lazy::new(|| {
     NonZeroUsize::new(
         gl_error_guard(|| unsafe {
             let mut val = 0;
@@ -332,23 +342,20 @@ const GL_ALIGNMENT: Lazy<NonZeroUsize> = Lazy::new(|| {
             );
             val as usize
         })
-            .unwrap(),
+        .unwrap(),
     )
-        .unwrap()
+    .unwrap()
 });
 
-
 #[cfg(feature = "fast")]
-const GL_ALIGNMENT: Lazy<NonZeroUsize> = Lazy::new(|| {
-    unsafe {
-        let mut val = 0;
-        gl::GetIntegerv(gl::UNIFORM_BUFFER_OFFSET_ALIGNMENT, &mut val);
-        tracing::trace!(
-            "glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, <inout val={}>)",
-            val
-        );
-        NonZeroUsize::new_unchecked(val as _)
-    }
+static GL_ALIGNMENT: Lazy<NonZeroUsize> = Lazy::new(|| unsafe {
+    let mut val = 0;
+    gl::GetIntegerv(gl::UNIFORM_BUFFER_OFFSET_ALIGNMENT, &mut val);
+    tracing::trace!(
+        "glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, <inout val={}>)",
+        val
+    );
+    NonZeroUsize::new_unchecked(val as _)
 });
 
 #[inline(always)]
