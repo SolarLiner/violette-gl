@@ -354,10 +354,13 @@ impl<F> Texture<F> {
         }
     }
 
+    /// Returns the texture unit uniform that binds a sampler of this texture into a shader program.
+    /// This also binds the texture.
     pub fn as_uniform(&self, unit: u32) -> Result<TextureUnit> {
         eyre::ensure!(unit < gl::MAX_COMBINED_TEXTURE_IMAGE_UNITS, format!("Trying to activate unit {} which is above the maximum supported of {}", unit, gl::MAX_COMBINED_TEXTURE_IMAGE_UNITS));
         unsafe { gl::ActiveTexture(gl::TEXTURE0 + unit); }
-        self.with_binding(|| Ok(TextureUnit(unit)))
+        self.bind();
+        Ok(TextureUnit(unit))
     }
 
     pub fn dimension(&self) -> Dimension {
