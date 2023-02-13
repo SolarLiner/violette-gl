@@ -22,10 +22,10 @@ pub trait ResourceExt<'a>: Resource<'a> {
         cb: F,
     ) -> T {
         self.bind();
-        
+        let ret = cb();
         #[cfg(not(feature = "no-unbind"))]
         self.unbind();
-        cb()
+        ret
     }
 }
 
