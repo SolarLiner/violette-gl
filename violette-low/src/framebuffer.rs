@@ -18,7 +18,7 @@ use crate::{
     utils::gl_error_guard,
     vertex::DrawMode,
 };
-use crate::{base::resource::ResourceExt, utils::gl_error};
+use crate::{base::resource::ResourceExt};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FramebufferId(u32);
