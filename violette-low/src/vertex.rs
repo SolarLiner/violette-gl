@@ -59,7 +59,7 @@ pub enum DrawMode {
 #[derive(Debug)]
 pub struct VertexArray {
     id: VaoId,
-    pub(crate) element: Option<(GLenum, usize)>,
+    pub(crate) element: Option<GLenum>,
 }
 
 impl<'a> Resource<'a> for VertexArray {
@@ -149,7 +149,7 @@ impl VertexArray {
             self.unbind();
             element_buffer.unbind();
         })?;
-        self.element.replace((T::GL_TYPE, element_buffer.len()));
+        self.element.replace(T::GL_TYPE);
         Ok(())
     }
 }

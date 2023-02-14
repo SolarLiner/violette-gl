@@ -9,6 +9,7 @@ use gl::types::*;
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
+use crate::base::resource::ResourceExt;
 use crate::program::Program;
 use crate::utils::GlRef;
 use crate::vertex::VertexArray;
@@ -18,7 +19,6 @@ use crate::{
     utils::gl_error_guard,
     vertex::DrawMode,
 };
-use crate::{base::resource::ResourceExt};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FramebufferId(u32);
@@ -236,6 +236,19 @@ impl Framebuffer {
         })
     }
 
+    pub fn enable_scissor(&self, x: i32, y: i32, w: i32, h: i32) -> Result<()> {
+        self.with_binding(|| {
+            gl_error_guard(|| unsafe {
+                gl::Enable(gl::SCISSOR_TEST);
+                gl::Scissor(x, y, w, h);
+            })
+        })
+    }
+
+    pub fn disable_scissor(&self) -> Result<()> {
+        self.with_binding(|| gl_error_guard(|| unsafe { gl::Disable(gl::SCISSOR_TEST) }))
+    }
+
     pub fn draw(
         &self,
         program: &Program,
@@ -265,22 +278,21 @@ impl Framebuffer {
         program: &Program,
         vao: &VertexArray,
         mode: DrawMode,
-        slice: impl RangeBounds<i32>,
+        slice: Range<i32>,
     ) -> Result<()> {
-        let Some((gl_type, len)) = vao.element else { eyre::bail!( "Vertex Array Object needs to be bound to an Element Buffer") };
+        let Some(gl_type) = vao.element else { eyre::bail!( "Vertex Array Object needs to be bound to an Element Buffer") };
         tracing::debug!(
             "Draw elements on FBO {} with program {} and VAO {}",
             self.id,
             program.id(),
             vao.id()
         );
-        let slice = normalize_range(slice, 0..len as _);
-        let count = slice.end - slice.start;
+        let count = slice.end - slice.start.max(0);
         gl_error_guard(|| {
             self.with_binding(|| {
                 program.with_binding(|| {
                     vao.with_binding(|| unsafe {
-                        gl::DrawElements(mode as _, count, gl_type, std::ptr::null());
+                        gl::DrawElements(mode as _, count, gl_type, slice.start as _);
                     })
                 })
             })
