@@ -1,25 +1,45 @@
 use std::{
-    fmt::{
-        Formatter,
-        self
-    },
-    num::NonZeroU32
+    fmt::{self, Formatter},
+    num::NonZeroU32,
 };
 
 use crate::{
     base::{
-        resource::{Resource},
+        resource::{Resource, ResourceExt},
         GlType,
     },
+    buffer::ArrayBuffer,
     utils::gl_error_guard,
-    base::resource::ResourceExt,
-    buffer::ArrayBuffer
 };
 
 use eyre::Result;
-use gl::types::{GLenum};
+use gl::types::GLenum;
 
 use crate::buffer::ElementBuffer;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VertexDesc {
+    pub num_components: usize,
+    pub raw_type: GLenum,
+    pub normalized: bool,
+    pub offset: usize,
+}
+
+impl VertexDesc {
+    pub const fn from_gl_type<T: GlType>(offset: usize) -> Self {
+        Self {
+            num_components: T::NUM_COMPONENTS,
+            raw_type: T::GL_TYPE,
+            normalized: T::NORMALIZED,
+            offset,
+        }
+    }
+
+    pub const fn normalized(mut self) -> Self {
+        self.normalized = true;
+        self
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
@@ -78,11 +98,11 @@ impl<'a> Resource<'a> for VertexArray {
     }
 
     fn bind(&self) {
-        unsafe {gl::BindVertexArray(self.id.get())}
+        unsafe { gl::BindVertexArray(self.id.get()) }
     }
 
     fn unbind(&self) {
-        unsafe {gl::BindVertexArray(0)}
+        unsafe { gl::BindVertexArray(0) }
     }
 }
 
@@ -110,8 +130,28 @@ impl Drop for VertexArray {
 }
 
 impl VertexArray {
-    pub fn set_vertex_attributes<V: VertexAttributes>(&mut self) -> Result<()> {
-        gl_error_guard(|| self.with_binding(|| unsafe { V::vertex_attributes() }))
+    pub fn set_vertex_attributes<V>(&mut self) -> Result<usize>
+    where
+        V: VertexAttributes,
+    {
+        gl_error_guard(|| {
+            self.with_binding(|| {
+                let attr = V::attributes();
+                for (i, el) in attr.iter().enumerate() {
+                    unsafe {
+                        gl::VertexAttribPointer(
+                            i as _,
+                            el.num_components as _,
+                            el.raw_type,
+                            if el.normalized { gl::TRUE } else { gl::FALSE },
+                            std::mem::size_of::<V>() as _,
+                            el.offset as *const _,
+                        );
+                    }
+                }
+                attr.len()
+            })
+        })
     }
 
     pub fn enable_vertex_attribute(&mut self, index: usize) {
@@ -126,23 +166,28 @@ impl VertexArray {
         })
     }
 
-    pub fn with_vertex_buffer<V: 'static + AsVertexAttributes>(
-        &mut self,
-        vertex_buffer: &ArrayBuffer<V>,
-    ) -> Result<()> {
+    pub fn with_vertex_buffer<V: 'static>(&mut self, vertex_buffer: &ArrayBuffer<V>) -> Result<()>
+    where
+        V: VertexAttributes,
+    {
         gl_error_guard(|| {
             self.bind();
             vertex_buffer.bind();
-            unsafe { V::Attr::vertex_attributes(); }
-            for i in 0..V::Attr::COUNT {
+            let attrib_count = self.set_vertex_attributes::<V>()?;
+            for i in 0..attrib_count {
                 self.enable_vertex_attribute(i as _);
             }
             self.unbind();
             vertex_buffer.unbind();
+            Ok(())
         })
+        .and_then(|r| r)
     }
 
-    pub fn with_element_buffer<T: GlType>(&mut self, element_buffer: &ElementBuffer<T>) -> Result<()> {
+    pub fn with_element_buffer<T: GlType>(
+        &mut self,
+        element_buffer: &ElementBuffer<T>,
+    ) -> Result<()> {
         gl_error_guard(|| {
             self.bind();
             element_buffer.bind();
@@ -154,131 +199,12 @@ impl VertexArray {
     }
 }
 
-pub trait VertexAttributes {
-    const COUNT: usize;
-
-    /// Load vertex attributes.
-    /// # Safety
-    /// This function is unsafe because it is directly talking to OpenGL. Implementers *should*
-    /// assume that a VAO is bound, and callees *must* check for errors here.
-    /// This function is also unsafe because it has the responsibility of correctly telling OpenGL
-    /// how to interpret the binary data sent to it for drawing. As such, implementers must make sure
-    /// that the type is correctly described by the attributes described within this function call.
-    unsafe fn vertex_attributes();
+pub trait VertexAttributes: Sized + bytemuck::Pod {
+    fn attributes() -> &'static [VertexDesc];
 }
 
-impl<T: GlType> VertexAttributes for T {
-    const COUNT: usize = 1;
-
-    unsafe fn vertex_attributes() {
-        gl::VertexAttribPointer(
-            0,
-            T::NUM_COMPONENTS as _,
-            T::GL_TYPE,
-            if T::NORMALIZED { gl::TRUE } else { gl::FALSE },
-            T::STRIDE as _,
-            std::ptr::null(),
-        );
+impl<T: GlType + bytemuck::Pod> VertexAttributes for T {
+    fn attributes() -> &'static [VertexDesc] {
+        vec![VertexDesc::from_gl_type::<T>(0)].leak()
     }
-}
-
-impl<A: GlType, B: GlType> VertexAttributes for (A, B) {
-    const COUNT: usize = 2;
-
-    unsafe fn vertex_attributes() {
-        gl::VertexAttribPointer(
-            0,
-            A::NUM_COMPONENTS as _,
-            A::GL_TYPE,
-            if A::NORMALIZED { gl::TRUE } else { gl::FALSE },
-            (A::STRIDE + B::STRIDE) as _,
-            std::ptr::null(),
-        );
-        gl::VertexAttribPointer(
-            1,
-            B::NUM_COMPONENTS as _,
-            B::GL_TYPE,
-            if B::NORMALIZED { gl::TRUE } else { gl::FALSE },
-            (A::STRIDE + B::STRIDE) as _,
-            A::STRIDE as _,
-        );
-    }
-}
-
-impl<A: GlType, B: GlType, C: GlType> VertexAttributes for (A, B, C) {
-    const COUNT: usize = 3;
-
-    unsafe fn vertex_attributes() {
-        gl::VertexAttribPointer(
-            0,
-            A::NUM_COMPONENTS as _,
-            A::GL_TYPE,
-            if A::NORMALIZED { gl::TRUE } else { gl::FALSE },
-            (A::STRIDE + B::STRIDE + C::STRIDE) as _,
-            std::ptr::null(),
-        );
-        gl::VertexAttribPointer(
-            1,
-            B::NUM_COMPONENTS as _,
-            B::GL_TYPE,
-            if B::NORMALIZED { gl::TRUE } else { gl::FALSE },
-            (A::STRIDE + B::STRIDE + C::STRIDE) as _,
-            A::STRIDE as _,
-        );
-        gl::VertexAttribPointer(
-            2,
-            C::NUM_COMPONENTS as _,
-            C::GL_TYPE,
-            if C::NORMALIZED { gl::TRUE } else { gl::FALSE },
-            (A::STRIDE + B::STRIDE + C::STRIDE) as _,
-            (A::STRIDE + B::STRIDE) as _,
-        );
-    }
-}
-
-impl<A: GlType, B: GlType, C: GlType, D: GlType> VertexAttributes for (A, B, C, D) {
-    const COUNT: usize = 4;
-
-    unsafe fn vertex_attributes() {
-        gl::VertexAttribPointer(
-            0,
-            A::NUM_COMPONENTS as _,
-            A::GL_TYPE,
-            if A::NORMALIZED { gl::TRUE } else { gl::FALSE },
-            (A::STRIDE + B::STRIDE + C::STRIDE + D::STRIDE) as _,
-            std::ptr::null(),
-        );
-        gl::VertexAttribPointer(
-            1,
-            B::NUM_COMPONENTS as _,
-            B::GL_TYPE,
-            if B::NORMALIZED { gl::TRUE } else { gl::FALSE },
-            (A::STRIDE + B::STRIDE + C::STRIDE + D::STRIDE) as _,
-            A::STRIDE as _,
-        );
-        gl::VertexAttribPointer(
-            2,
-            C::NUM_COMPONENTS as _,
-            C::GL_TYPE,
-            if C::NORMALIZED { gl::TRUE } else { gl::FALSE },
-            (A::STRIDE + B::STRIDE + C::STRIDE + D::STRIDE) as _,
-            (A::STRIDE + B::STRIDE) as _,
-        );
-        gl::VertexAttribPointer(
-            3,
-            D::NUM_COMPONENTS as _,
-            D::GL_TYPE,
-            if D::NORMALIZED { gl::TRUE } else { gl::FALSE },
-            (A::STRIDE + B::STRIDE + C::STRIDE + D::STRIDE) as _,
-            (A::STRIDE + B::STRIDE + C::STRIDE) as _,
-        );
-    }
-}
-
-pub trait AsVertexAttributes {
-    type Attr: VertexAttributes;
-}
-
-impl<V: VertexAttributes> AsVertexAttributes for V {
-    type Attr = V;
 }

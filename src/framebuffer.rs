@@ -9,15 +9,12 @@ use gl::types::*;
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
-use crate::base::resource::ResourceExt;
-use crate::program::Program;
-use crate::utils::GlRef;
-use crate::vertex::VertexArray;
 use crate::{
-    base::resource::Resource,
+    base::resource::{Resource, ResourceExt},
+    program::Program,
     texture::{DepthStencil, Dimension, Texture},
-    utils::gl_error_guard,
-    vertex::DrawMode,
+    utils::{gl_error_guard, GlRef},
+    vertex::{DrawMode, VertexArray},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
