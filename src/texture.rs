@@ -1,5 +1,11 @@
-use std::{fmt, marker::PhantomData, num::NonZeroU32, ops::{Deref, DerefMut}, path::Path};
-use std::fmt::Formatter;
+use std::{
+    fmt,
+    fmt::Formatter,
+    marker::PhantomData,
+    num::NonZeroU32,
+    ops::{Deref, DerefMut},
+    path::Path,
+};
 
 use bytemuck::Pod;
 use duplicate::duplicate_item as duplicate;
@@ -9,8 +15,8 @@ use num_derive::FromPrimitive;
 
 use crate::{
     base::{
-        GlType,
         resource::{Resource, ResourceExt},
+        GlType,
     },
     program::Uniform,
     utils::gl_error_guard,
@@ -20,7 +26,7 @@ pub trait TextureFormat {
     type Subpixel: GlType + Pod;
     const COUNT: usize;
     const FORMAT: GLenum;
-    const INTERNAL_FORMAT: GLenum;
+    const TYPE: GLenum;
     const NORMALIZED: bool;
 }
 
@@ -38,7 +44,7 @@ impl TextureFormat for rust_t {
     type Subpixel = Self;
     const COUNT: usize = 1;
     const FORMAT: GLenum = format;
-    const INTERNAL_FORMAT: GLenum = internal_format;
+    const TYPE: GLenum = internal_format;
     const NORMALIZED: bool = false;
 }
 
@@ -56,7 +62,7 @@ impl TextureFormat for [rust_t; 2] {
     type Subpixel = rust_t;
     const COUNT: usize = 2;
     const FORMAT: GLenum = format;
-    const INTERNAL_FORMAT: GLenum = internal_format;
+    const TYPE: GLenum = internal_format;
     const NORMALIZED: bool = false;
 }
 
@@ -74,7 +80,7 @@ impl TextureFormat for [rust_t; 3] {
     type Subpixel = rust_t;
     const COUNT: usize = 3;
     const FORMAT: GLenum = format;
-    const INTERNAL_FORMAT: GLenum = internal_format;
+    const TYPE: GLenum = internal_format;
     const NORMALIZED: bool = false;
 }
 
@@ -92,7 +98,7 @@ impl TextureFormat for [rust_t; 4] {
     type Subpixel = rust_t;
     const COUNT: usize = 4;
     const FORMAT: GLenum = format;
-    const INTERNAL_FORMAT: GLenum = internal_format;
+    const TYPE: GLenum = internal_format;
     const NORMALIZED: bool = false;
 }
 
@@ -111,24 +117,24 @@ impl<F: TextureFormat> AsTextureFormat for image::Luma<F> {
 
 #[cfg(feature = "img")]
 impl<F> AsTextureFormat for image::LumaA<F>
-    where
-        [F; 2]: TextureFormat,
+where
+    [F; 2]: TextureFormat,
 {
     type TextureFormat = [F; 2];
 }
 
 #[cfg(feature = "img")]
 impl<F> AsTextureFormat for image::Rgb<F>
-    where
-        [F; 3]: TextureFormat,
+where
+    [F; 3]: TextureFormat,
 {
     type TextureFormat = [F; 3];
 }
 
 #[cfg(feature = "img")]
 impl<F> AsTextureFormat for image::Rgba<F>
-    where
-        [F; 4]: TextureFormat,
+where
+    [F; 4]: TextureFormat,
 {
     type TextureFormat = [F; 4];
 }
@@ -140,7 +146,7 @@ impl<F: TextureFormat> TextureFormat for Normalized<F> {
     type Subpixel = F::Subpixel;
     const COUNT: usize = F::COUNT;
     const FORMAT: GLenum = F::FORMAT;
-    const INTERNAL_FORMAT: GLenum = F::INTERNAL_FORMAT;
+    const TYPE: GLenum = F::TYPE;
     const NORMALIZED: bool = true;
 }
 
@@ -151,7 +157,7 @@ impl TextureFormat for DepthStencil<f32, ()> {
     type Subpixel = f32;
     const COUNT: usize = 1;
     const FORMAT: GLenum = gl::DEPTH_COMPONENT;
-    const INTERNAL_FORMAT: GLenum = gl::DEPTH_COMPONENT;
+    const TYPE: GLenum = gl::DEPTH_COMPONENT;
     const NORMALIZED: bool = false;
 }
 
@@ -159,7 +165,7 @@ impl TextureFormat for DepthStencil<f32, u8> {
     type Subpixel = f32;
     const COUNT: usize = 1;
     const FORMAT: GLenum = gl::DEPTH32F_STENCIL8;
-    const INTERNAL_FORMAT: GLenum = gl::DEPTH_STENCIL;
+    const TYPE: GLenum = gl::DEPTH_STENCIL;
     const NORMALIZED: bool = false;
 }
 
@@ -357,8 +363,17 @@ impl<F> Texture<F> {
     /// Returns the texture unit uniform that binds a sampler of this texture into a shader program.
     /// This also binds the texture.
     pub fn as_uniform(&self, unit: u32) -> Result<TextureUnit> {
-        eyre::ensure!(unit < gl::MAX_COMBINED_TEXTURE_IMAGE_UNITS, format!("Trying to activate unit {} which is above the maximum supported of {}", unit, gl::MAX_COMBINED_TEXTURE_IMAGE_UNITS));
-        unsafe { gl::ActiveTexture(gl::TEXTURE0 + unit); }
+        eyre::ensure!(
+            unit < gl::MAX_COMBINED_TEXTURE_IMAGE_UNITS,
+            format!(
+                "Trying to activate unit {} which is above the maximum supported of {}",
+                unit,
+                gl::MAX_COMBINED_TEXTURE_IMAGE_UNITS
+            )
+        );
+        unsafe {
+            gl::ActiveTexture(gl::TEXTURE0 + unit);
+        }
         self.bind();
         Ok(TextureUnit(unit))
     }
@@ -380,11 +395,22 @@ impl<F> Texture<F> {
     }
 
     pub fn mipmap_size(&self, mipmap: usize) -> Result<(NonZeroU32, NonZeroU32)> {
+        self.bind();
         let mut width = 0;
         let mut height = 0;
         gl_error_guard(|| unsafe {
-            gl::GetTexLevelParameteriv(self.id.target.gl_target(), mipmap as _, gl::TEXTURE_WIDTH, &mut width);
-            gl::GetTexLevelParameteriv(self.id.target.gl_target(), mipmap as _, gl::TEXTURE_HEIGHT, &mut height);
+            gl::GetTexLevelParameteriv(
+                self.id.target.gl_target(),
+                mipmap as _,
+                gl::TEXTURE_WIDTH,
+                &mut width,
+            );
+            gl::GetTexLevelParameteriv(
+                self.id.target.gl_target(),
+                mipmap as _,
+                gl::TEXTURE_HEIGHT,
+                &mut height,
+            );
         })?;
         let Some(width) = NonZeroU32::new(width as _) else { eyre::bail!("Zero texture size");};
         let Some(height) = NonZeroU32::new(height as _) else { eyre::bail!("Zero texture size");};
@@ -393,7 +419,7 @@ impl<F> Texture<F> {
 
     pub fn num_mipmaps(&self) -> usize {
         let n = if self.has_mipmaps {
-            f32::log2(self.width.max(self.height).max(self.depth).get() as _).floor() as usize 
+            f32::log2(self.width.max(self.height).max(self.depth).get() as _).floor() as usize
         } else {
             0
         };
@@ -415,23 +441,230 @@ impl<F: TextureFormat> Texture<F> {
             "Data slice must be a rectangular array of pixels"
         );
         let height = NonZeroU32::new(len.get() / F::COUNT as u32 / width.get()).unwrap();
-        let mut this = Self::new(width as _, height as _, NonZeroU32::new(1).unwrap(), Dimension::D2);
+        let mut this = Self::new(
+            width as _,
+            height as _,
+            NonZeroU32::new(1).unwrap(),
+            Dimension::D2,
+        );
         this.set_data(data)?;
         Ok(this)
     }
 
+    pub fn download(&self, level: usize) -> Result<Vec<F::Subpixel>> {
+        eyre::ensure!(
+            level < self.num_mipmaps(),
+            "Cannot get level higher than the number of mipmaps in this texture"
+        );
+        self.bind();
+
+        let (width, height) = self.mipmap_size(level)?;
+        let byte_size = width.get() as usize * height.get() as usize;
+
+        let mut data = vec![0u8; byte_size];
+        gl_error_guard(|| unsafe {
+            gl::GetTexImage(
+                self.id.target.gl_target(),
+                level as _,
+                F::FORMAT,
+                F::Subpixel::GL_TYPE,
+                data.as_mut_ptr().cast(),
+            );
+        })?;
+        Ok(bytemuck::cast_vec(data))
+    }
+
+    #[cfg(feature = "img")]
+    pub fn download_image<P: image::Pixel<Subpixel = F::Subpixel>>(
+        &self,
+        level: usize,
+    ) -> Result<image::ImageBuffer<P, Vec<P::Subpixel>>> {
+        let (width, height) = self.mipmap_size(level)?;
+        let data = self.download(level)?;
+        Ok(image::ImageBuffer::from_vec(width.get(), height.get(), data).unwrap())
+    }
+
     #[cfg(feature = "img")]
     pub fn from_image<
-        P: image::Pixel<Subpixel=F::Subpixel> + AsTextureFormat<TextureFormat=F>,
-        C: Deref<Target=[P::Subpixel]> + DerefMut,
+        P: image::Pixel<Subpixel = F::Subpixel> + AsTextureFormat<TextureFormat = F>,
+        C: Deref<Target = [P::Subpixel]> + DerefMut,
     >(
         mut image: image::ImageBuffer<P, C>,
     ) -> Result<Self>
-        where
-            P::Subpixel: GlType + Pod,
+    where
+        P::Subpixel: GlType + Pod,
     {
         image::imageops::flip_vertical_in_place(&mut image);
         Self::from_2d_pixels(image.width().try_into()?, image.as_raw())
+    }
+
+    // TODO: Support Non-2D textures
+    #[tracing::instrument(skip_all)]
+    pub fn reserve_memory(&self) -> Result<()> {
+        eyre::ensure!(
+            self.id.target.dim == Dimension::D2,
+            "Non-2D texture not supported at the moment"
+        );
+        tracing::trace!(
+            "glTexImage2D(<target for dimension {:?}>, 0, <INTERNAL_FORMAT {:x}>, {}, {}, 0, ..., NULL)",
+            self.id.target.dim,
+            F::TYPE,
+            self.width,
+            self.height
+        );
+        gl_error_guard(|| {
+            self.with_binding(|| unsafe {
+                gl::TexImage2D(
+                    self.id.target.gl_target(),
+                    0,
+                    F::TYPE as _,
+                    self.width.get() as _,
+                    self.height.get() as _,
+                    0,
+                    F::FORMAT,
+                    F::Subpixel::GL_TYPE,
+                    std::ptr::null(),
+                )
+            })
+        })
+    }
+
+    pub fn set_data(&mut self, data: &[F::Subpixel]) -> Result<()> {
+        let Some(len) = NonZeroU32::new(data.len() as _) else { eyre::bail!("Cannot set empty data"); };
+        eyre::ensure!(
+            // self.width * self.height * self.depth * F::COUNT as u32
+            self.width
+                .checked_mul(self.height)
+                .unwrap()
+                .checked_mul(NonZeroU32::new(F::COUNT as _).unwrap())
+                .unwrap()
+                == len,
+            "Data length has to match the extents of the texture"
+        );
+
+        let bytes: &[u8] = bytemuck::cast_slice(data);
+        gl_error_guard(|| {
+            self.with_binding(|| unsafe {
+                use Dimension::*;
+                match (self.id.target.dim, self.id.target.is_multisample()) {
+                    (D2, false) => gl::TexImage2D(
+                        self.id.target.gl_target(),
+                        0,
+                        F::TYPE as _,
+                        self.width.get() as _,
+                        self.height.get() as _,
+                        0,
+                        F::FORMAT,
+                        F::Subpixel::GL_TYPE,
+                        bytes.as_ptr() as *const _,
+                    ),
+                    (D2, true) => gl::TexImage2DMultisample(
+                        self.id.target.gl_target(),
+                        self.id.target.samples.get() as _,
+                        F::TYPE as _,
+                        self.width.get() as _,
+                        self.height.get() as _,
+                        gl::TRUE,
+                    ),
+                    _ => todo!(),
+                }
+            })
+        })?;
+        self.generate_mipmaps()?;
+        Ok(())
+    }
+
+    pub fn generate_mipmaps(&mut self) -> Result<()> {
+        gl_error_guard(|| {
+            self.with_binding(|| unsafe {
+                gl::GenerateMipmap(self.id.target.gl_target());
+            })
+        })?;
+        self.has_mipmaps = true;
+        Ok(())
+    }
+
+    pub fn clear_resize(
+        &mut self,
+        width: NonZeroU32,
+        height: NonZeroU32,
+        depth: NonZeroU32,
+    ) -> Result<()> {
+        self.width = width;
+        self.height = height;
+        self.depth = depth;
+        self.reserve_memory()
+            .context("Failed to reserve memory following clear")?;
+        self.generate_mipmaps()
+            .context("Cannot generate texture mipmaps")?;
+        Ok(())
+    }
+
+    pub fn wrap_s(&self, wrap: TextureWrap) -> Result<()> {
+        gl_error_guard(|| {
+            self.with_binding(|| unsafe {
+                gl::TexParameteri(self.id.target.gl_target(), gl::TEXTURE_WRAP_S, wrap as _);
+            })
+        })
+    }
+
+    pub fn wrap_t(&self, wrap: TextureWrap) -> Result<()> {
+        gl_error_guard(|| {
+            self.with_binding(|| unsafe {
+                gl::TexParameteri(self.id.target.gl_target(), gl::TEXTURE_WRAP_T, wrap as _);
+            })
+        })
+    }
+
+    pub fn wrap_r(&self, wrap: TextureWrap) -> Result<()> {
+        gl_error_guard(|| {
+            self.with_binding(|| unsafe {
+                gl::TexParameteri(self.id.target.gl_target(), gl::TEXTURE_WRAP_R, wrap as _);
+            })
+        })
+    }
+
+    pub fn filter_min(&self, param: SampleMode) -> Result<()> {
+        gl_error_guard(|| {
+            self.with_binding(|| unsafe {
+                gl::TexParameteri(
+                    self.id.target.gl_target(),
+                    gl::TEXTURE_MIN_FILTER,
+                    param as _,
+                );
+            })
+        })
+    }
+
+    pub fn filter_min_mipmap(&self, mipmap: SampleMode, texture: SampleMode) -> Result<()> {
+        use SampleMode::*;
+        let param = match (mipmap, texture) {
+            (Linear, Linear) => gl::LINEAR_MIPMAP_LINEAR,
+            (Nearest, Nearest) => gl::NEAREST_MIPMAP_NEAREST,
+            (Nearest, Linear) => gl::NEAREST_MIPMAP_LINEAR,
+            (Linear, Nearest) => gl::LINEAR_MIPMAP_NEAREST,
+        };
+        gl_error_guard(|| {
+            self.with_binding(|| unsafe {
+                gl::TexParameteri(
+                    self.id.target.gl_target(),
+                    gl::TEXTURE_MIN_FILTER,
+                    param as _,
+                )
+            })
+        })
+    }
+
+    pub fn filter_mag(&self, mode: SampleMode) -> Result<()> {
+        gl_error_guard(|| {
+            self.with_binding(|| unsafe {
+                gl::TexParameteri(
+                    self.id.target.gl_target(),
+                    gl::TEXTURE_MAG_FILTER,
+                    mode as _,
+                )
+            })
+        })
     }
 }
 
@@ -474,173 +707,4 @@ impl Texture<[f32; 2]> {
     }
 }
 
-impl<F: TextureFormat> Texture<F> {
-    // TODO: Support Non-2D textures
-    #[tracing::instrument(skip_all)]
-    pub fn reserve_memory(&self) -> Result<()> {
-        eyre::ensure!(
-            self.id.target.dim == Dimension::D2,
-            "Non-2D texture not supported at the moment"
-        );
-        tracing::trace!(
-            "glTexImage2D(<target for dimension {:?}>, 0, <INTERNAL_FORMAT {:x}>, {}, {}, 0, ..., NULL)",
-            self.id.target.dim,
-            F::INTERNAL_FORMAT,
-            self.width,
-            self.height
-        );
-        gl_error_guard(|| self.with_binding(|| unsafe {
-            gl::TexImage2D(
-                self.id.target.gl_target(),
-                0,
-                F::INTERNAL_FORMAT as _,
-                self.width.get() as _,
-                self.height.get() as _,
-                0,
-                F::FORMAT,
-                F::Subpixel::GL_TYPE,
-                std::ptr::null(),
-            )
-        }))
-    }
-
-    pub fn set_data(&mut self, data: &[F::Subpixel]) -> Result<()> {
-        let Some(len) = NonZeroU32::new(data.len() as _) else { eyre::bail!("Cannot set empty data"); };
-        eyre::ensure!(
-            // self.width * self.height * self.depth * F::COUNT as u32
-            self.width.checked_mul(self.height).unwrap().checked_mul(NonZeroU32::new(F::COUNT as _).unwrap()).unwrap()
-                == len,
-            "Data length has to match the extents of the texture"
-        );
-
-        let bytes: &[u8] = bytemuck::cast_slice(data);
-        gl_error_guard(|| self.with_binding(|| unsafe {
-            use Dimension::*;
-            match (self.id.target.dim, self.id.target.is_multisample()) {
-                (D2, false) => gl::TexImage2D(
-                    self.id.target.gl_target(),
-                    0,
-                    F::INTERNAL_FORMAT as _,
-                    self.width.get() as _,
-                    self.height.get() as _,
-                    0,
-                    F::FORMAT,
-                    F::Subpixel::GL_TYPE,
-                    bytes.as_ptr() as *const _,
-                ),
-                (D2, true) => gl::TexImage2DMultisample(
-                    self.id.target.gl_target(),
-                    self.id.target.samples.get() as _,
-                    F::INTERNAL_FORMAT as _,
-                    self.width.get() as _,
-                    self.height.get() as _,
-                    gl::TRUE,
-                ),
-                _ => todo!(),
-            }
-        }))?;
-        self.generate_mipmaps()?;
-        Ok(())
-    }
-
-    pub fn generate_mipmaps(&mut self) -> Result<()> {
-        gl_error_guard(|| self.with_binding(|| unsafe {
-            gl::GenerateMipmap(self.id.target.gl_target());
-        }))?;
-        self.has_mipmaps = true;
-        Ok(())
-    }
-
-    pub fn clear_resize(&mut self, width: NonZeroU32, height: NonZeroU32, depth: NonZeroU32) -> Result<()> {
-        self.width = width;
-        self.height = height;
-        self.depth = depth;
-        self.reserve_memory()
-            .context("Failed to reserve memory following clear")?;
-        self.generate_mipmaps().context("Cannot generate texture mipmaps")?;
-        Ok(())
-    }
-
-    pub fn wrap_s(&self, wrap: TextureWrap) -> Result<()> {
-        gl_error_guard(|| self.with_binding(|| unsafe {
-            gl::TexParameteri(self.id.target.gl_target(), gl::TEXTURE_WRAP_S, wrap as _);
-        }))
-    }
-
-    pub fn wrap_t(&self, wrap: TextureWrap) -> Result<()> {
-        gl_error_guard(|| self.with_binding(|| unsafe {
-            gl::TexParameteri(self.id.target.gl_target(), gl::TEXTURE_WRAP_T, wrap as _);
-        }))
-    }
-
-    pub fn wrap_r(&self, wrap: TextureWrap) -> Result<()> {
-        gl_error_guard(|| self.with_binding(|| unsafe {
-            gl::TexParameteri(self.id.target.gl_target(), gl::TEXTURE_WRAP_R, wrap as _);
-        }))
-    }
-
-    pub fn filter_min(&self, param: SampleMode) -> Result<()> {
-        gl_error_guard(|| self.with_binding(|| unsafe {
-            gl::TexParameteri(
-                self.id.target.gl_target(),
-                gl::TEXTURE_MIN_FILTER,
-                param as _,
-            );
-        }))
-    }
-
-    pub fn filter_min_mipmap(
-        &self,
-        mipmap: SampleMode,
-        texture: SampleMode,
-    ) -> Result<()> {
-        use SampleMode::*;
-        let param = match (mipmap, texture) {
-            (Linear, Linear) => gl::LINEAR_MIPMAP_LINEAR,
-            (Nearest, Nearest) => gl::NEAREST_MIPMAP_NEAREST,
-            (Nearest, Linear) => gl::NEAREST_MIPMAP_LINEAR,
-            (Linear, Nearest) => gl::LINEAR_MIPMAP_NEAREST,
-        };
-        gl_error_guard(|| self.with_binding(|| unsafe {
-            gl::TexParameteri(
-                self.id.target.gl_target(),
-                gl::TEXTURE_MIN_FILTER,
-                param as _,
-            )
-        }))
-    }
-
-    pub fn filter_mag(&self, mode: SampleMode) -> Result<()> {
-        gl_error_guard(|| self.with_binding(|| unsafe {
-            gl::TexParameteri(
-                self.id.target.gl_target(),
-                gl::TEXTURE_MAG_FILTER,
-                mode as _,
-            )
-        }))
-    }
-
-    pub fn get_mipmap(&self, mipmap: usize) -> Result<Vec<F::Subpixel>> {
-        self.with_binding(|| {
-            gl_error_guard(|| {
-                unsafe {
-                    let mut size = 0;
-                    gl::GetTexLevelParameteriv(self.id.target.gl_target(), mipmap as _, gl::TEXTURE_BUFFER_SIZE, &mut size);
-
-                    let mut data = vec![0u8; size as _];
-                    gl::GetTexImage(self.id.target.gl_target(), mipmap as _, F::FORMAT, F::INTERNAL_FORMAT, data.as_mut_ptr().cast());
-
-                    bytemuck::cast_vec(data)
-                }
-            })
-        })
-    }
-
-    #[cfg(feature = "img")]
-    pub fn get_mipmap_img<P: image::Pixel<Subpixel=F::Subpixel>>(&self, mipmap: usize) -> Result<image::ImageBuffer<P, Vec<P::Subpixel>>> {
-        let data = self.get_mipmap(mipmap)?;
-        let (width, height) = self.mipmap_size(mipmap)?;
-        let Some(img) = image::ImageBuffer::from_vec(width.get(), height.get(), data) else { eyre::bail!("Cannot create image from data") };
-        Ok(img)
-    }
-}
+impl<F: TextureFormat> Texture<F> {}
