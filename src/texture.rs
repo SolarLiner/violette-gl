@@ -459,15 +459,17 @@ impl<F: TextureFormat> Texture<F> {
         self.bind();
 
         let (width, height) = self.mipmap_size(level)?;
-        let byte_size = width.get() as usize * height.get() as usize;
+        let byte_size = width.get() as usize * height.get() as usize * F::COUNT * std::mem::size_of::<F::Subpixel>();
+        let byte_size = byte_size.max(4);
 
         let mut data = vec![0u8; byte_size];
         gl_error_guard(|| unsafe {
-            gl::GetTexImage(
+            gl::GetnTexImage(
                 self.id.target.gl_target(),
                 level as _,
                 F::FORMAT,
                 F::Subpixel::GL_TYPE,
+                byte_size as _,
                 data.as_mut_ptr().cast(),
             );
         })?;
@@ -475,13 +477,15 @@ impl<F: TextureFormat> Texture<F> {
     }
 
     #[cfg(feature = "img")]
-    pub fn download_image<P: image::Pixel<Subpixel = F::Subpixel>>(
+    pub fn download_image<P:'static + image::Pixel<Subpixel = F::Subpixel>>(
         &self,
         level: usize,
     ) -> Result<image::ImageBuffer<P, Vec<P::Subpixel>>> {
         let (width, height) = self.mipmap_size(level)?;
         let data = self.download(level)?;
-        Ok(image::ImageBuffer::from_vec(width.get(), height.get(), data).unwrap())
+        let mut image = image::ImageBuffer::from_vec(width.get(), height.get(), data).unwrap();
+        image::imageops::flip_vertical_in_place(&mut image);
+        Ok(image)
     }
 
     #[cfg(feature = "img")]
