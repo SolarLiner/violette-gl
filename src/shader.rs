@@ -69,6 +69,7 @@ impl<const K: u32> Shader<K> {
     /// this method call.
     #[tracing::instrument(skip(source))]
     pub fn new(source: &str) -> Result<Self> {
+        tracing::trace!("{}", source);
         let id = unsafe { gl::CreateShader(K) };
         tracing::trace!("glCreateShader({:?}) -> {}", K, id);
         let success = unsafe {

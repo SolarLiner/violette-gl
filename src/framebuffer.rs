@@ -139,6 +139,7 @@ impl Framebuffer {
             gl::GenFramebuffers(1, &mut fbo);
             fbo
         };
+        tracing::debug!("Create framebuffer {}", id);
         Self {
             id: FramebufferId::new(id).unwrap(),
         }
@@ -161,7 +162,7 @@ impl<'a> Resource<'a> for Framebuffer {
     }
 
     fn bind(&self) {
-        tracing::debug!("Bind framebuffer {}", self.id);
+        tracing::trace!("Bind framebuffer {}", self.id);
         unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, self.id.0 as _);
         }
@@ -171,7 +172,7 @@ impl<'a> Resource<'a> for Framebuffer {
         if self.id == FramebufferId::BACKBUFFER {
             return;
         }
-        tracing::debug!("Unbind framebuffer {}", self.id);
+        tracing::trace!("Unbind framebuffer {}", self.id);
         unsafe { gl::BindFramebuffer(gl::FRAMEBUFFER, 0) }
     }
 }
@@ -278,7 +279,7 @@ impl Framebuffer {
         slice: Range<i32>,
     ) -> Result<()> {
         let Some(gl_type) = vao.element else { eyre::bail!( "Vertex Array Object needs to be bound to an Element Buffer") };
-        tracing::debug!(
+        tracing::trace!(
             "Draw elements on FBO {} with program {} and VAO {}",
             self.id,
             program.id(),

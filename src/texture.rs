@@ -7,7 +7,7 @@ use std::{
     path::Path,
 };
 
-use bytemuck::Pod;
+use bytemuck::{Pod, Zeroable};
 use duplicate::duplicate_item as duplicate;
 use eyre::{Context, Result};
 use gl::types::*;
@@ -459,21 +459,20 @@ impl<F: TextureFormat> Texture<F> {
         self.bind();
 
         let (width, height) = self.mipmap_size(level)?;
-        let byte_size = width.get() as usize * height.get() as usize * F::COUNT * std::mem::size_of::<F::Subpixel>();
-        let byte_size = byte_size.max(4);
+        let size = width.get() as usize * height.get() as usize * F::COUNT * std::mem::size_of::<F::Subpixel>();
 
-        let mut data = vec![0u8; byte_size];
+        let mut data = vec![F::Subpixel::zeroed(); size];
         gl_error_guard(|| unsafe {
             gl::GetnTexImage(
                 self.id.target.gl_target(),
                 level as _,
                 F::FORMAT,
                 F::Subpixel::GL_TYPE,
-                byte_size as _,
+                (std::mem::size_of::<F::Subpixel>() * size) as _,
                 data.as_mut_ptr().cast(),
             );
         })?;
-        Ok(bytemuck::cast_vec(data))
+        Ok(data)
     }
 
     #[cfg(feature = "img")]
