@@ -11,6 +11,7 @@ use bytemuck::{Pod, Zeroable};
 use duplicate::duplicate_item as duplicate;
 use eyre::{Context, Result};
 use gl::types::*;
+use glam::{UVec2, UVec3};
 use num_derive::FromPrimitive;
 
 use crate::{
@@ -452,6 +453,25 @@ impl<F: TextureFormat> Texture<F> {
         Ok(this)
     }
 
+    pub fn read_pixel(&self, pos: UVec2) -> Result<F::Subpixel> {
+        let mut data = vec![0u8; F::Subpixel::STRIDE];
+        gl_error_guard(|| {
+            self.with_binding(|| unsafe {
+                gl::ReadPixels(
+                    pos.x as _,
+                    pos.y as _,
+                    1,
+                    1,
+                    F::FORMAT,
+                    F::Subpixel::GL_TYPE,
+                    data.as_mut_ptr().cast(),
+                )
+            })
+        })?;
+        let data = bytemuck::cast_vec(data);
+        Ok(data[0])
+    }
+
     pub fn download(&self, level: usize) -> Result<Vec<F::Subpixel>> {
         eyre::ensure!(
             level < self.num_mipmaps(),
@@ -591,9 +611,18 @@ impl<F: TextureFormat> Texture<F> {
     ) -> Result<()> {
         eyre::ensure!(x >= 0, "Sub data rectangle exceeds texture bounds");
         eyre::ensure!(y >= 0, "Sub data rectangle exceeds texture bounds");
-        eyre::ensure!(x + w < self.width.get() as _, "Sub data rectangle exceeds texture bounds");
-        eyre::ensure!(y + h < self.height.get() as _, "Sub data rectangle exceeds texture bounds");
-        eyre::ensure!(level < self.num_mipmaps(), "Sub data rectangle exceeds texture bounds");
+        eyre::ensure!(
+            x + w < self.width.get() as _,
+            "Sub data rectangle exceeds texture bounds"
+        );
+        eyre::ensure!(
+            y + h < self.height.get() as _,
+            "Sub data rectangle exceeds texture bounds"
+        );
+        eyre::ensure!(
+            level < self.num_mipmaps(),
+            "Sub data rectangle exceeds texture bounds"
+        );
 
         let bytes: &[u8] = bytemuck::cast_slice(data);
         gl_error_guard(|| {

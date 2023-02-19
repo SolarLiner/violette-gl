@@ -229,6 +229,7 @@ impl Framebuffer {
     pub fn disable_blending(&self) -> Result<()> {
         self.with_binding(|| {
             gl_error_guard(|| unsafe {
+                gl::BlendFunc(gl::ONE, gl::ZERO);
                 gl::Disable(gl::BLEND);
             })
         })
