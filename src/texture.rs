@@ -304,6 +304,7 @@ impl Uniform for TextureUnit {
     }
 }
 
+// TODO: Refactor texture implementation into a "generic texture" vs. "Texture2D" specializations
 #[derive(Debug)]
 pub struct Texture<F> {
     __fmt: PhantomData<F>,
@@ -459,7 +460,10 @@ impl<F: TextureFormat> Texture<F> {
         self.bind();
 
         let (width, height) = self.mipmap_size(level)?;
-        let size = width.get() as usize * height.get() as usize * F::COUNT * std::mem::size_of::<F::Subpixel>();
+        let size = width.get() as usize
+            * height.get() as usize
+            * F::COUNT
+            * std::mem::size_of::<F::Subpixel>();
 
         let mut data = vec![F::Subpixel::zeroed(); size];
         gl_error_guard(|| unsafe {
@@ -476,7 +480,7 @@ impl<F: TextureFormat> Texture<F> {
     }
 
     #[cfg(feature = "img")]
-    pub fn download_image<P:'static + image::Pixel<Subpixel = F::Subpixel>>(
+    pub fn download_image<P: 'static + image::Pixel<Subpixel = F::Subpixel>>(
         &self,
         level: usize,
     ) -> Result<image::ImageBuffer<P, Vec<P::Subpixel>>> {
@@ -532,7 +536,7 @@ impl<F: TextureFormat> Texture<F> {
         })
     }
 
-    pub fn set_data(&mut self, data: &[F::Subpixel]) -> Result<()> {
+    pub fn set_data(&self, data: &[F::Subpixel]) -> Result<()> {
         let Some(len) = NonZeroU32::new(data.len() as _) else { eyre::bail!("Cannot set empty data"); };
         eyre::ensure!(
             // self.width * self.height * self.depth * F::COUNT as u32
@@ -573,8 +577,43 @@ impl<F: TextureFormat> Texture<F> {
                 }
             })
         })?;
-        self.generate_mipmaps()?;
         Ok(())
+    }
+
+    pub fn set_sub_data_2D(
+        &self,
+        level: usize,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        data: &[F::Subpixel],
+    ) -> Result<()> {
+        eyre::ensure!(x >= 0, "Sub data rectangle exceeds texture bounds");
+        eyre::ensure!(y >= 0, "Sub data rectangle exceeds texture bounds");
+        eyre::ensure!(x + w < self.width.get() as _, "Sub data rectangle exceeds texture bounds");
+        eyre::ensure!(y + h < self.height.get() as _, "Sub data rectangle exceeds texture bounds");
+        eyre::ensure!(level < self.num_mipmaps(), "Sub data rectangle exceeds texture bounds");
+
+        let bytes: &[u8] = bytemuck::cast_slice(data);
+        gl_error_guard(|| {
+            self.with_binding(|| unsafe {
+                match (self.id.target.dim, self.id.target.is_multisample()) {
+                    (Dimension::D2, false) => gl::TexSubImage2D(
+                        self.id.target.gl_target(),
+                        level as _,
+                        x,
+                        y,
+                        w,
+                        h,
+                        F::FORMAT,
+                        F::Subpixel::GL_TYPE,
+                        bytes.as_ptr().cast(),
+                    ),
+                    _ => todo!(),
+                }
+            })
+        })
     }
 
     pub fn generate_mipmaps(&mut self) -> Result<()> {
