@@ -451,7 +451,7 @@ impl<F: TextureFormat> Texture<F> {
             "Data slice must be a rectangular array of pixels"
         );
         let height = NonZeroU32::new(len.get() / F::COUNT as u32 / width.get()).unwrap();
-        let mut this = Self::new(
+        let this = Self::new(
             width as _,
             height as _,
             NonZeroU32::new(1).unwrap(),
