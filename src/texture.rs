@@ -362,6 +362,14 @@ impl<F> Texture<F> {
         }
     }
 
+    pub fn size(&self) -> (NonZeroU32, NonZeroU32, NonZeroU32) {
+        (self.width, self.height, self.depth)
+    }
+
+    pub fn size_vec(&self) -> UVec3 {
+        UVec3::new(self.width.get(), self.height.get(), self.depth.get())
+    }
+
     /// Returns the texture unit uniform that binds a sampler of this texture into a shader program.
     /// This also binds the texture.
     pub fn as_uniform(&self, unit: u32) -> Result<TextureUnit> {
@@ -487,12 +495,12 @@ impl<F: TextureFormat> Texture<F> {
 
         let mut data = vec![F::Subpixel::zeroed(); size];
         gl_error_guard(|| unsafe {
-            gl::GetnTexImage(
+            gl::GetTexImage(
                 self.id.target.gl_target(),
                 level as _,
                 F::FORMAT,
                 F::Subpixel::GL_TYPE,
-                (std::mem::size_of::<F::Subpixel>() * size) as _,
+                // (std::mem::size_of::<F::Subpixel>() * size) as _,
                 data.as_mut_ptr().cast(),
             );
         })?;

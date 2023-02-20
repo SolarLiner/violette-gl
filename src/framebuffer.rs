@@ -112,6 +112,22 @@ pub struct Framebuffer {
     id: FramebufferId,
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, FromPrimitive)]
+#[repr(u32)]
+pub enum BlendFunction {
+    Add = gl::FUNC_ADD,
+    Subtract = gl::FUNC_SUBTRACT,
+    RevSubtract = gl::FUNC_REVERSE_SUBTRACT,
+    Min = gl::MIN,
+    Max = gl::MAX,
+}
+
+impl Framebuffer {
+    pub fn blend_equation(&self, func: BlendFunction) {
+        self.with_binding(|| unsafe { gl::BlendEquation(func as _) })
+    }
+}
+
 impl std::ops::Deref for Framebuffer {
     type Target = FramebufferId;
 
