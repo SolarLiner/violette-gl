@@ -495,12 +495,12 @@ impl<F: TextureFormat> Texture<F> {
 
         let mut data = vec![F::Subpixel::zeroed(); size];
         gl_error_guard(|| unsafe {
-            gl::GetnTexImage(
+            gl::GetTexImage(
                 self.id.target.gl_target(),
                 level as _,
                 F::FORMAT,
                 F::Subpixel::GL_TYPE,
-                (std::mem::size_of::<F::Subpixel>() * size) as _,
+                // (std::mem::size_of::<F::Subpixel>() * size) as _,
                 data.as_mut_ptr().cast(),
             );
         })?;
