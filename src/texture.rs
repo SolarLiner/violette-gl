@@ -362,6 +362,14 @@ impl<F> Texture<F> {
         }
     }
 
+    pub fn size(&self) -> (NonZeroU32, NonZeroU32, NonZeroU32) {
+        (self.width, self.height, self.depth)
+    }
+
+    pub fn size_vec(&self) -> UVec3 {
+        UVec3::new(self.width.get(), self.height.get(), self.depth.get())
+    }
+
     /// Returns the texture unit uniform that binds a sampler of this texture into a shader program.
     /// This also binds the texture.
     pub fn as_uniform(&self, unit: u32) -> Result<TextureUnit> {
