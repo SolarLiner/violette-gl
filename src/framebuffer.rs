@@ -123,8 +123,10 @@ pub enum BlendFunction {
 }
 
 impl Framebuffer {
-    pub fn blend_equation(&self, func: BlendFunction) {
-        self.with_binding(|| unsafe { gl::BlendEquation(func as _) })
+    pub fn blend_equation(func: BlendFunction) {
+        unsafe {
+            gl::BlendEquation(func as _);
+        }
     }
 }
 
@@ -194,74 +196,62 @@ impl<'a> Resource<'a> for Framebuffer {
 }
 
 impl Framebuffer {
-    pub fn viewport(&self, x: i32, y: i32, width: i32, height: i32) {
-        self.with_binding(|| unsafe {
+    pub fn viewport(x: i32, y: i32, width: i32, height: i32) {
+        unsafe {
             gl::Viewport(x, y, width, height);
+        }
+    }
+
+    pub fn clear_color([red, green, blue, alpha]: [f32; 4]) {
+        unsafe { gl::ClearColor(red, green, blue, alpha) }
+    }
+
+    pub fn clear_depth(value: f64) {
+        unsafe {
+            gl::ClearDepth(value);
+        }
+    }
+
+    pub fn do_clear(&self, mode: ClearBuffer) {
+        self.with_binding(|| unsafe {
+            gl::Clear(mode.bits());
         })
     }
 
-    pub fn clear_color(&self, [red, green, blue, alpha]: [f32; 4]) -> Result<()> {
-        gl_error_guard(|| self.with_binding(|| unsafe { gl::ClearColor(red, green, blue, alpha) }))
+    pub fn enable_depth_test(func: DepthTestFunction) {
+        unsafe {
+            gl::DepthFunc(func as _);
+            gl::Enable(gl::DEPTH_TEST);
+        }
     }
 
-    pub fn clear_depth(&self, value: f64) -> Result<()> {
-        gl_error_guard(|| {
-            self.with_binding(|| unsafe {
-                gl::ClearDepth(value);
-            })
-        })
+    pub fn disable_depth_test() {
+        unsafe { gl::Disable(gl::DEPTH_TEST) };
     }
 
-    pub fn do_clear(&self, mode: ClearBuffer) -> Result<()> {
-        self.with_binding(|| {
-            gl_error_guard(|| unsafe {
-                gl::Clear(mode.bits());
-            })
-        })
+    pub fn enable_blending(source: Blend, target: Blend) {
+        unsafe {
+            gl::BlendFunc(source as _, target as _);
+            gl::Enable(gl::BLEND);
+        }
     }
 
-    pub fn enable_depth_test(&self, func: DepthTestFunction) -> Result<()> {
-        self.with_binding(|| {
-            gl_error_guard(|| unsafe {
-                gl::DepthFunc(func as _);
-                gl::Enable(gl::DEPTH_TEST);
-            })
-        })
+    pub fn disable_blending() {
+        unsafe {
+            gl::BlendFunc(gl::ONE, gl::ZERO);
+            gl::Disable(gl::BLEND);
+        }
     }
 
-    pub fn disable_depth_test(&self) -> Result<()> {
-        self.with_binding(|| gl_error_guard(|| unsafe { gl::Disable(gl::DEPTH_TEST) }))
+    pub fn enable_scissor(x: i32, y: i32, w: i32, h: i32) {
+        unsafe {
+            gl::Enable(gl::SCISSOR_TEST);
+            gl::Scissor(x, y, w, h);
+        }
     }
 
-    pub fn enable_blending(&self, source: Blend, target: Blend) -> Result<()> {
-        self.with_binding(|| {
-            gl_error_guard(|| unsafe {
-                gl::BlendFunc(source as _, target as _);
-                gl::Enable(gl::BLEND);
-            })
-        })
-    }
-
-    pub fn disable_blending(&self) -> Result<()> {
-        self.with_binding(|| {
-            gl_error_guard(|| unsafe {
-                gl::BlendFunc(gl::ONE, gl::ZERO);
-                gl::Disable(gl::BLEND);
-            })
-        })
-    }
-
-    pub fn enable_scissor(&self, x: i32, y: i32, w: i32, h: i32) -> Result<()> {
-        self.with_binding(|| {
-            gl_error_guard(|| unsafe {
-                gl::Enable(gl::SCISSOR_TEST);
-                gl::Scissor(x, y, w, h);
-            })
-        })
-    }
-
-    pub fn disable_scissor(&self) -> Result<()> {
-        self.with_binding(|| gl_error_guard(|| unsafe { gl::Disable(gl::SCISSOR_TEST) }))
+    pub fn disable_scissor() {
+        unsafe { gl::Disable(gl::SCISSOR_TEST) }
     }
 
     pub fn draw(

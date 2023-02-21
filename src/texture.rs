@@ -314,7 +314,6 @@ pub struct Texture<F> {
     depth: NonZeroU32,
     id: TextureId,
     has_mipmaps: bool,
-    unit: Option<GLenum>,
 }
 
 impl<'a, F: 'a> Resource<'a> for Texture<F> {
@@ -358,7 +357,6 @@ impl<F> Texture<F> {
             depth,
             has_mipmaps: false,
             id: TextureId::new(id, TextureTarget { dim, samples }).unwrap(),
-            unit: None,
         }
     }
 
@@ -451,7 +449,7 @@ impl<F: TextureFormat> Texture<F> {
             "Data slice must be a rectangular array of pixels"
         );
         let height = NonZeroU32::new(len.get() / F::COUNT as u32 / width.get()).unwrap();
-        let mut this = Self::new(
+        let this = Self::new(
             width as _,
             height as _,
             NonZeroU32::new(1).unwrap(),
@@ -608,7 +606,7 @@ impl<F: TextureFormat> Texture<F> {
         Ok(())
     }
 
-    pub fn set_sub_data_2D(
+    pub fn set_sub_data_2d(
         &self,
         level: usize,
         x: i32,
