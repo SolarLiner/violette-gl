@@ -1,16 +1,16 @@
-use std::{ffi::{CString}, fmt, num::NonZeroU32, path::Path};
 use std::fmt::Formatter;
+use std::{ffi::CString, fmt, num::NonZeroU32, path::Path};
 
 use eyre::{Context, Result};
 
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
-use crate::utils::{gl_string};
+use crate::utils::gl_string;
 
-pub type VertexShader = Shader<{gl::VERTEX_SHADER}>;
-pub type FragmentShader = Shader<{gl::FRAGMENT_SHADER}>;
-pub type GeometryShader = Shader<{gl::GEOMETRY_SHADER}>;
+pub type VertexShader = Shader<{ gl::VERTEX_SHADER }>;
+pub type FragmentShader = Shader<{ gl::FRAGMENT_SHADER }>;
+pub type GeometryShader = Shader<{ gl::GEOMETRY_SHADER }>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive)]
 #[repr(u32)]

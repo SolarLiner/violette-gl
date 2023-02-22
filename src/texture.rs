@@ -1,3 +1,9 @@
+use bytemuck::{Pod, Zeroable};
+use duplicate::duplicate_item as duplicate;
+use eyre::{Context, Result};
+use gl::types::*;
+use glam::{UVec2, UVec3};
+use num_derive::FromPrimitive;
 use std::{
     fmt,
     fmt::Formatter,
@@ -6,13 +12,6 @@ use std::{
     ops::{Deref, DerefMut},
     path::Path,
 };
-
-use bytemuck::{Pod, Zeroable};
-use duplicate::duplicate_item as duplicate;
-use eyre::{Context, Result};
-use gl::types::*;
-use glam::{UVec2, UVec3};
-use num_derive::FromPrimitive;
 
 use crate::{
     base::{
@@ -493,12 +492,12 @@ impl<F: TextureFormat> Texture<F> {
 
         let mut data = vec![F::Subpixel::zeroed(); size];
         gl_error_guard(|| unsafe {
-            gl::GetnTexImage(
+            gl::GetTexImage(
                 self.id.target.gl_target(),
                 level as _,
                 F::FORMAT,
                 F::Subpixel::GL_TYPE,
-                (std::mem::size_of::<F::Subpixel>() * size) as _,
+                // (std::mem::size_of::<F::Subpixel>() * size) as _,
                 data.as_mut_ptr().cast(),
             );
         })?;

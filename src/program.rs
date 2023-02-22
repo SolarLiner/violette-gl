@@ -476,7 +476,7 @@ impl Program<Linked> {
 
         Ok(AttributeDesc::for_attribute(self.id, attr as _))
     }
-    
+
     pub fn set_uniform<T: Uniform>(&self, location: UniformLocation, value: T) -> Result<()> {
         if self.id != location.program {
             eyre::bail!(

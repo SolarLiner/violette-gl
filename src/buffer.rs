@@ -2,7 +2,7 @@ use std::{
     fmt::{self, Formatter},
     marker::PhantomData,
     num::{NonZeroU32, NonZeroUsize},
-    ops::{Range, Bound, RangeBounds},
+    ops::{Bound, Range, RangeBounds},
 };
 
 use bitflags::bitflags;
