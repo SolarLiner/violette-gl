@@ -12,6 +12,8 @@ use std::{
     ops::{Deref, DerefMut},
     path::Path,
 };
+use std::cell::Cell;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{
     base::{
@@ -312,7 +314,7 @@ pub struct Texture<F> {
     height: NonZeroU32,
     depth: NonZeroU32,
     id: TextureId,
-    has_mipmaps: bool,
+    has_mipmaps: AtomicBool,
 }
 
 impl<'a, F: 'a> Resource<'a> for Texture<F> {
@@ -354,7 +356,7 @@ impl<F> Texture<F> {
             width,
             height,
             depth,
-            has_mipmaps: false,
+            has_mipmaps: AtomicBool::new(false),
             id: TextureId::new(id, TextureTarget { dim, samples }).unwrap(),
         }
     }
@@ -425,7 +427,7 @@ impl<F> Texture<F> {
     }
 
     pub fn num_mipmaps(&self) -> usize {
-        let n = if self.has_mipmaps {
+        let n = if self.has_mipmaps.load(Ordering::Relaxed) {
             f32::log2(self.width.max(self.height).max(self.depth).get() as _).floor() as usize
         } else {
             0
@@ -602,6 +604,7 @@ impl<F: TextureFormat> Texture<F> {
                 }
             })
         })?;
+        self.generate_mipmaps()?;
         Ok(())
     }
 
@@ -650,13 +653,13 @@ impl<F: TextureFormat> Texture<F> {
         })
     }
 
-    pub fn generate_mipmaps(&mut self) -> Result<()> {
+    pub fn generate_mipmaps(&self) -> Result<()> {
         gl_error_guard(|| {
             self.with_binding(|| unsafe {
                 gl::GenerateMipmap(self.id.target.gl_target());
             })
         })?;
-        self.has_mipmaps = true;
+        self.has_mipmaps.store(true, Ordering::Relaxed);
         Ok(())
     }
 
@@ -769,9 +772,10 @@ impl Texture<[f32; 2]> {
     pub fn load_rg32f<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_repr = path.as_ref().display().to_string();
         tracing::info!("Loading {}", path_repr);
-        let img = image::open(path)
+        let mut img = image::open(path)
             .context("Cannot load image from {}")?
             .into_rgb32f();
+        image::imageops::flip_vertical_in_place(&mut img);
         let data = img
             .pixels()
             .flat_map(|px| {
