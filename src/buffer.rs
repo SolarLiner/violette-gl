@@ -232,7 +232,7 @@ impl<T: Pod, const K: u32> Buffer<T, K> {
     }
 
     fn byte_slice(&self, sizeof: usize, range: impl RangeBounds<usize>) -> Range<usize> {
-        tracing::debug!(range.start = ?range.start_bound(), range.end = ?range.end_bound());
+        tracing::trace!(range.start = ?range.start_bound(), range.end = ?range.end_bound());
         let alignment = next_multiple(sizeof, *GL_ALIGNMENT);
         let start = match range.start_bound() {
             Bound::Included(i) => *i,
