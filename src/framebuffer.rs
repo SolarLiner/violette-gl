@@ -196,6 +196,13 @@ impl<'a> Resource<'a> for Framebuffer {
 }
 
 impl Framebuffer {
+    pub fn get_viewport() -> [i32; 4] {
+        let mut viewport = [0; 4];
+        unsafe {
+            gl::GetIntegerv(gl::VIEWPORT, viewport.as_mut_ptr());
+        }
+        viewport
+    }
     pub fn viewport(x: i32, y: i32, width: i32, height: i32) {
         unsafe {
             gl::Viewport(x, y, width, height);
