@@ -2,6 +2,7 @@ use std::{
     fmt::{self, Formatter},
     num::NonZeroU32,
 };
+use std::marker::PhantomData;
 
 use crate::{
     base::{
@@ -78,6 +79,7 @@ pub enum DrawMode {
 
 #[derive(Debug)]
 pub struct VertexArray {
+    __non_send: PhantomData<*mut ()>,
     id: VaoId,
     pub(crate) element: Option<GLenum>,
 }
@@ -114,6 +116,7 @@ impl VertexArray {
             gl::GenVertexArrays(1, &mut id);
         }
         Self {
+            __non_send: PhantomData,
             id: VaoId::new(id).unwrap(),
             element: None,
         }

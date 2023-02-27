@@ -101,7 +101,7 @@ pub enum BufferUsageHint {
 #[derive(Debug)]
 /// An OpenGL buffer on the GPU.
 pub struct Buffer<T, const K: u32> {
-    __type: PhantomData<T>,
+    __type: PhantomData<*mut T>,
     pub id: BufferId<K>,
     count: usize,
 }

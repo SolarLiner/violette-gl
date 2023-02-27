@@ -309,7 +309,7 @@ impl Uniform for TextureUnit {
 // TODO: Refactor texture implementation into a "generic texture" vs. "Texture2D" specializations
 #[derive(Debug)]
 pub struct Texture<F> {
-    __fmt: PhantomData<F>,
+    __fmt: PhantomData<*mut F>,
     width: NonZeroU32,
     height: NonZeroU32,
     depth: NonZeroU32,

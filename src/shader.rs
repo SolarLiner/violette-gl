@@ -1,5 +1,6 @@
 use std::fmt::Formatter;
 use std::{ffi::CString, fmt, num::NonZeroU32, path::Path};
+use std::marker::PhantomData;
 
 use eyre::{Context, Result};
 
@@ -51,6 +52,7 @@ impl<const K: u32> ShaderId<K> {
 #[derive(Debug)]
 /// OpenGL shader, a unit of work in an OpenGL pipeline.
 pub struct Shader<const K: u32> {
+    __non_send: PhantomData<*mut ()>,
     /// Shader ID. Guaranteed to be non-zero, as ID 0 is reserved for unbinding shaders.
     pub id: ShaderId<K>,
 }
@@ -91,6 +93,7 @@ impl<const K: u32> Shader<K> {
             eyre::bail!(error);
         } else {
             Ok(Self {
+                __non_send: PhantomData,
                 id: ShaderId::new(id).unwrap(),
             })
         }

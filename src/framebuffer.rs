@@ -2,6 +2,7 @@ use std::{
     fmt::{self, Formatter},
     ops::{Range, RangeBounds},
 };
+use std::marker::PhantomData;
 
 use bitflags::bitflags;
 use eyre::Result;
@@ -107,11 +108,6 @@ pub enum FramebufferStatus {
     Complete = gl::FRAMEBUFFER_COMPLETE,
 }
 
-#[derive(Debug)]
-pub struct Framebuffer {
-    id: FramebufferId,
-}
-
 #[derive(Debug, Copy, Clone, Eq, PartialEq, FromPrimitive)]
 #[repr(u32)]
 pub enum BlendFunction {
@@ -120,6 +116,12 @@ pub enum BlendFunction {
     RevSubtract = gl::FUNC_REVERSE_SUBTRACT,
     Min = gl::MIN,
     Max = gl::MAX,
+}
+
+#[derive(Debug)]
+pub struct Framebuffer {
+    __non_send: PhantomData<*mut ()>,
+    id: FramebufferId,
 }
 
 impl Framebuffer {
@@ -147,6 +149,7 @@ impl Drop for Framebuffer {
 impl Framebuffer {
     pub const fn backbuffer() -> GlRef<'static, Self> {
         GlRef::create(Self {
+            __non_send: PhantomData,
             id: FramebufferId::BACKBUFFER,
         })
     }
@@ -159,6 +162,7 @@ impl Framebuffer {
         };
         tracing::debug!("Create framebuffer {}", id);
         Self {
+            __non_send: PhantomData,
             id: FramebufferId::new(id).unwrap(),
         }
     }

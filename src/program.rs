@@ -5,6 +5,7 @@ use std::{
     num::NonZeroU32,
     path::Path,
 };
+use std::marker::PhantomData;
 
 use duplicate::duplicate_item as duplicate;
 use either::Either;
@@ -229,6 +230,7 @@ pub struct Linked;
 /// A shader program. Linkage status is tracked at compile-time.
 pub struct Program<Status = Linked> {
     __status: Status,
+    __non_send: PhantomData<*mut ()>,
     pub id: ProgramId,
 }
 
@@ -273,6 +275,7 @@ impl Program<Unlinked> {
         let id = unsafe { gl::CreateProgram() };
         Self {
             id: ProgramId(NonZeroU32::new(id).unwrap()),
+            __non_send: PhantomData,
             __status: Unlinked,
         }
     }
@@ -305,6 +308,7 @@ impl Program<Unlinked> {
         if is_success {
             Ok(Program {
                 id: ProgramId::new(id).unwrap(),
+                __non_send: PhantomData,
                 __status: Linked,
             })
         } else {
