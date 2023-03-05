@@ -1,9 +1,3 @@
-use bytemuck::{Pod, Zeroable};
-use duplicate::duplicate_item as duplicate;
-use eyre::{Context, Result};
-use gl::types::*;
-use glam::{UVec2, UVec3};
-use num_derive::FromPrimitive;
 use std::{
     fmt,
     fmt::Formatter,
@@ -12,13 +6,19 @@ use std::{
     ops::{Deref, DerefMut},
     path::Path,
 };
-use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+use bytemuck::{Pod, Zeroable};
+use duplicate::duplicate_item as duplicate;
+use eyre::{Context, Result};
+use gl::types::*;
+use glam::{UVec2, UVec3};
+use num_derive::FromPrimitive;
 
 use crate::{
     base::{
-        resource::{Resource, ResourceExt},
         GlType,
+        resource::{Resource, ResourceExt},
     },
     program::Uniform,
     utils::gl_error_guard,
@@ -192,7 +192,7 @@ impl TextureId {
     }
 }
 
-impl std::ops::Deref for TextureId {
+impl Deref for TextureId {
     type Target = NonZeroU32;
 
     fn deref(&self) -> &Self::Target {
@@ -300,7 +300,7 @@ impl GlType for TextureUnit {
 }
 
 impl Uniform for TextureUnit {
-    unsafe fn write_uniform(&self, location: gl::types::GLint) {
+    unsafe fn write_uniform(&self, location: GLint) {
         tracing::trace!("glUniform1i(<location>, GL_TEXTURE{})", self.0);
         gl::Uniform1i(location, self.0 as _);
     }
