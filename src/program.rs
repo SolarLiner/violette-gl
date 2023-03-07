@@ -14,8 +14,8 @@ use gl::types::{GLdouble, GLenum, GLfloat, GLint, GLuint};
 
 use crate::{
     base::{
-        resource::{Resource, ResourceExt},
         GlType,
+        resource::{Resource, ResourceExt},
     },
     buffer::BufferSlice,
     shader::{FragmentShader, GeometryShader, ShaderId, VertexShader},
@@ -508,6 +508,7 @@ impl Program<Linked> {
                 buf.size,
             );
             gl::UniformBlockBinding(self.id.get(), location.block_index, location.binding);
+            tracing::debug!("Bind buffer slice {} at block index {} at location {}", self.id.get(), location.block_index, location.binding);
         })
     }
 }
