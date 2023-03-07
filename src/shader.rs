@@ -1,9 +1,8 @@
-use std::fmt::Formatter;
 use std::{ffi::CString, fmt, num::NonZeroU32, path::Path};
+use std::fmt::Formatter;
 use std::marker::PhantomData;
 
 use eyre::{Context, Result};
-
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
@@ -100,7 +99,8 @@ impl<const K: u32> Shader<K> {
     }
 
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
         let source = std::fs::read_to_string(path).context("Cannot read shader source")?;
-        Self::new(&source)
+        Self::new(&source).context(format!("Loading {}", path.display()))
     }
 }
