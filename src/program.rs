@@ -28,6 +28,12 @@ pub trait Uniform {
     unsafe fn write_uniform(&self, location: GLint);
 }
 
+impl Uniform for bool {
+    unsafe fn write_uniform(&self, location: GLint) {
+        gl::Uniform1i(location, if *self { gl::TRUE as _ } else { gl::FALSE as _ })
+    }
+}
+
 #[duplicate(
 gl_t            uniform;
 [GLint]         [Uniform1i];
@@ -508,7 +514,12 @@ impl Program<Linked> {
                 buf.size,
             );
             gl::UniformBlockBinding(self.id.get(), location.block_index, location.binding);
-            tracing::debug!("Bind buffer slice {} at block index {} at location {}", self.id.get(), location.block_index, location.binding);
+            tracing::debug!(
+                "Bind buffer slice {} at block index {} at location {}",
+                self.id.get(),
+                location.block_index,
+                location.binding
+            );
         })
     }
 }
