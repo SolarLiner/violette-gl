@@ -220,18 +220,23 @@ impl<T: Pod, const K: u32> Buffer<T, K> {
         Ok(())
     }
 
+    pub fn at(&self, ix: usize) -> BufferSlice<T, K> {
+        self.slice(ix..=ix)
+    }
+
     pub fn slice(&self, range: impl RangeBounds<usize>) -> BufferSlice<T, K> {
-        let range = self.byte_slice(std::mem::size_of::<T>(), range);
+        let (alignment, range) = self.byte_slice(std::mem::size_of::<T>(), range);
         let offset = range.start as _;
         let size = (range.end - range.start) as _;
         BufferSlice {
             buffer: self,
+            alignment,
             offset,
             size,
         }
     }
 
-    fn byte_slice(&self, sizeof: usize, range: impl RangeBounds<usize>) -> Range<usize> {
+    fn byte_slice(&self, sizeof: usize, range: impl RangeBounds<usize>) -> (usize, Range<usize>) {
         tracing::trace!(range.start = ?range.start_bound(), range.end = ?range.end_bound());
         let alignment = next_multiple(sizeof, *GL_ALIGNMENT);
         let start = match range.start_bound() {
@@ -244,7 +249,7 @@ impl<T: Pod, const K: u32> Buffer<T, K> {
             Bound::Excluded(i) => *i,
             Bound::Unbounded => self.count * std::mem::size_of::<T>(),
         } * alignment;
-        start..end
+        (alignment, start..end)
     }
 }
 
@@ -261,10 +266,11 @@ pub struct BufferSlice<'buf, T, const K: u32> {
     pub(crate) buffer: &'buf Buffer<T, K>,
     pub(crate) offset: GLintptr,
     pub(crate) size: GLsizeiptr,
+    pub alignment: usize,
 }
 
 impl<'buf, T: bytemuck::Pod, const K: u32> BufferSlice<'buf, T, K> {
-    pub fn get(&self, access: BufferAccess) -> Result<MappedBufferData<T, K>> {
+    pub fn get_all(&self, access: BufferAccess) -> Result<MappedBufferData<T, K>> {
         gl_error_guard(|| {
             self.buffer.with_binding(|| {
                 let bytes = unsafe {
@@ -287,9 +293,20 @@ impl<'buf, T: bytemuck::Pod, const K: u32> BufferSlice<'buf, T, K> {
         })
     }
 
-    pub fn set(&mut self, data: &[T], access: BufferAccess) -> Result<()> {
+    pub fn set(&mut self, at: usize, value: &T) -> Result<()> {
+        let offset = self.offset + (at * self.alignment) as GLintptr;
+        let bytes = bytemuck::bytes_of(value);
+        self.buffer.with_binding(|| gl_error_guard(|| unsafe {
+            let access = BufferAccess::MAP_WRITE;
+            let ptr = gl::MapBufferRange(K, offset, self.size, access.bits);
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, self.alignment as _);
+            gl::UnmapBuffer(K);
+        }))
+    }
+
+    pub fn set_all(&mut self, data: &[T], access: BufferAccess) -> Result<()> {
         eyre::ensure!(
-            data.len() * std::mem::size_of::<T>() == self.size as _,
+            data.len() * self.alignment == self.size as _,
             "Slice length need to equal mapped slice length"
         );
         let bytes = bytemuck::cast_slice(data);
@@ -298,7 +315,7 @@ impl<'buf, T: bytemuck::Pod, const K: u32> BufferSlice<'buf, T, K> {
                 let access = access | BufferAccess::MAP_READ | BufferAccess::MAP_WRITE;
                 let ptr = gl::MapBufferRange(K, self.offset, self.size, access.bits);
                 std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, self.size as _);
-                gl::UnmapBuffer(self.buffer.id.get());
+                gl::UnmapBuffer(K);
             })
         })
     }
