@@ -176,8 +176,7 @@ impl<T: Uniform> Uniform for Option<T> {
 /// Structure allowing uniforms to be written into a program.
 pub struct UniformLocation {
     program: ProgramId,
-    location: u32,
-    desc: UniformDesc,
+    desc: Option<UniformDesc>,
 }
 
 impl UniformLocation {
@@ -185,15 +184,18 @@ impl UniformLocation {
         self.program == program.id
     }
 
-    pub fn desc(&self) -> &UniformDesc {
-        &self.desc
+    pub fn is_valid_location(&self) -> bool {
+        self.desc.is_some()
+    }
+
+    pub fn desc(&self) -> Option<&UniformDesc> {
+        self.desc.as_ref()
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UniformBlockIndex {
     program: ProgramId,
-    binding: u32,
     block_index: u32,
 }
 
@@ -422,7 +424,7 @@ impl Program<Linked> {
     }
 
     /// Select an uniform from the program. Returns `None` if the uniform doesn't exist.
-    pub fn uniform(&self, name: &str) -> Option<UniformLocation> {
+    pub fn uniform(&self, name: &str) -> UniformLocation {
         // Leave it as i32 because it can return -1 for errors
         let location = unsafe {
             let name = CString::new(name).unwrap();
@@ -434,33 +436,31 @@ impl Program<Linked> {
             name,
             location
         );
-        if location >= 0 {
-            Some(UniformLocation {
-                program: self.id,
-                location: location as _,
-                desc: UniformDesc::for_uniform_at_location(self.id, location as _),
-            })
-        } else {
-            None
+        UniformLocation {
+            program: self.id,
+            desc: (location >= 0)
+                .then(|| UniformDesc::for_uniform_at_location(self.id, location as _)),
         }
     }
 
-    pub fn uniform_block(&self, name: &str, binding: u32) -> Result<UniformBlockIndex> {
-        let block_index = gl_error_guard(|| unsafe {
+    pub fn uniform_block(&self, name: &str) -> UniformBlockIndex {
+        let block_index = unsafe {
             let name = CString::new(name).unwrap();
             gl::GetUniformBlockIndex(self.id.get(), name.as_ptr() as *const _)
-        })?;
+        };
         tracing::trace!(
             "glGetUniformBlockIndex({}, {}) -> {}",
             self.id.get(),
             name,
             block_index
         );
-        Ok(UniformBlockIndex {
+        if block_index == gl::INVALID_INDEX {
+            tracing::warn!("Uniform block {:?} not found, returning sentinel", name);
+        }
+        UniformBlockIndex {
             block_index,
-            binding,
             program: self.id,
-        })
+        }
     }
 
     pub fn num_attributes(&self) -> usize {
@@ -495,38 +495,52 @@ impl Program<Linked> {
                 location.program.get()
             );
         }
-        gl_error_guard(|| {
-            self.with_binding(|| unsafe { value.write_uniform(location.location as _) })
-        })
+        // Check that the location is valid
+        if let Some(desc) = &location.desc {
+            gl_error_guard(|| {
+                self.with_binding(|| unsafe { value.write_uniform(desc.uniform_location as _) })
+            })
+        } else {
+            tracing::debug!("Uniform location does not exist, skipping");
+            Ok(())
+        }
     }
 
     pub fn bind_block<T>(
         &self,
-        location: UniformBlockIndex,
         buf: &BufferSlice<T, { gl::UNIFORM_BUFFER }>,
+        location: UniformBlockIndex,
+        binding: u32,
     ) -> Result<()> {
-        gl_error_guard(|| unsafe {
-            gl::BindBufferRange(
-                gl::UNIFORM_BUFFER,
-                location.binding,
-                buf.buffer.id.get(),
-                buf.offset,
-                buf.size,
-            );
-            gl::UniformBlockBinding(self.id.get(), location.block_index, location.binding);
-            tracing::debug!(
-                "Bind buffer slice {} at block index {} at location {}",
-                self.id.get(),
-                location.block_index,
-                location.binding
-            );
-        })
+        // Check that the location is valid
+        if location.block_index != gl::INVALID_INDEX {
+            gl_error_guard(|| unsafe {
+                gl::BindBufferRange(
+                    gl::UNIFORM_BUFFER,
+                    binding,
+                    buf.buffer.id.get(),
+                    buf.offset,
+                    buf.size,
+                );
+                gl::UniformBlockBinding(self.id.get(), location.block_index, binding);
+                tracing::debug!(
+                    "Bind buffer slice {} at block index {} at location {}",
+                    self.id.get(),
+                    location.block_index,
+                    binding,
+                );
+            })
+        } else {
+            tracing::debug!("Uniform block index does not exist, skipping");
+            Ok(())
+        }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct UniformDesc {
-    pub location: u32,
+    pub uniform_location: u32,
+    pub program_location: u32,
     pub block_index: u32,
     program: ProgramId,
     name_length: usize,
@@ -554,7 +568,8 @@ impl UniformDesc {
         }
         UniformDesc {
             program,
-            location: values[3] as _,
+            uniform_location: location,
+            program_location: values[3] as _,
             name_length: values[0] as _,
             block_index: values[2] as _,
             raw_type: values[1] as _,
@@ -568,7 +583,7 @@ impl UniformDesc {
                 gl::GetProgramResourceName(
                     self.program.get(),
                     gl::UNIFORM,
-                    self.location,
+                    self.program_location,
                     capacity as _,
                     len_ptr,
                     str_ptr,
