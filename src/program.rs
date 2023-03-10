@@ -488,14 +488,14 @@ impl Program<Linked> {
     }
 
     pub fn set_uniform<T: Uniform>(&self, location: UniformLocation, value: T) -> Result<()> {
-        if self.id != location.program {
-            eyre::bail!(
-                "Cannot set uniform for program {} as the uniform location is for program {}",
-                self.id.get(),
-                location.program.get()
-            );
-        }
-        // Check that the location is valid
+        /*        if self.id != location.program {
+                    eyre::bail!(
+                        "Cannot set uniform for program {} as the uniform location is for program {}",
+                        self.id.get(),
+                        location.program.get()
+                    );
+                }
+        */        // Check that the location is valid
         if let Some(desc) = &location.desc {
             gl_error_guard(|| {
                 self.with_binding(|| unsafe { value.write_uniform(desc.uniform_location as _) })

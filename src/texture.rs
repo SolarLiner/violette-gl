@@ -762,7 +762,7 @@ impl Texture<[f32; 3]> {
     pub fn load_rgb32f<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_repr = path.as_ref().display().to_string();
         tracing::info!("Loading {}", path_repr);
-        let img = image::open(path).context("Cannot load image from {}")?;
+        let img = image::open(path).with_context(|| format!("Cannot load image from {}", path_repr))?;
         Self::from_image(img.to_rgb32f())
     }
 }
