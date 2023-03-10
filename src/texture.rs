@@ -6,6 +6,7 @@ use std::{
     ops::{Deref, DerefMut},
     path::Path,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytemuck::{Pod, Zeroable};
 use duplicate::duplicate_item as duplicate;
@@ -16,8 +17,8 @@ use num_derive::FromPrimitive;
 
 use crate::{
     base::{
-        resource::{Resource, ResourceExt},
         GlType,
+        resource::{Resource, ResourceExt},
     },
     program::Uniform,
     utils::gl_error_guard,
@@ -191,7 +192,7 @@ impl TextureId {
     }
 }
 
-impl std::ops::Deref for TextureId {
+impl Deref for TextureId {
     type Target = NonZeroU32;
 
     fn deref(&self) -> &Self::Target {
@@ -299,7 +300,7 @@ impl GlType for TextureUnit {
 }
 
 impl Uniform for TextureUnit {
-    unsafe fn write_uniform(&self, location: gl::types::GLint) {
+    unsafe fn write_uniform(&self, location: GLint) {
         tracing::trace!("glUniform1i(<location>, GL_TEXTURE{})", self.0);
         gl::Uniform1i(location, self.0 as _);
     }
@@ -308,13 +309,12 @@ impl Uniform for TextureUnit {
 // TODO: Refactor texture implementation into a "generic texture" vs. "Texture2D" specializations
 #[derive(Debug)]
 pub struct Texture<F> {
-    __fmt: PhantomData<F>,
+    __fmt: PhantomData<*mut F>,
     width: NonZeroU32,
     height: NonZeroU32,
     depth: NonZeroU32,
     id: TextureId,
-    has_mipmaps: bool,
-    unit: Option<GLenum>,
+    has_mipmaps: AtomicBool,
 }
 
 impl<'a, F: 'a> Resource<'a> for Texture<F> {
@@ -356,9 +356,8 @@ impl<F> Texture<F> {
             width,
             height,
             depth,
-            has_mipmaps: false,
+            has_mipmaps: AtomicBool::new(false),
             id: TextureId::new(id, TextureTarget { dim, samples }).unwrap(),
-            unit: None,
         }
     }
 
@@ -428,7 +427,7 @@ impl<F> Texture<F> {
     }
 
     pub fn num_mipmaps(&self) -> usize {
-        let n = if self.has_mipmaps {
+        let n = if self.has_mipmaps.load(Ordering::Relaxed) {
             f32::log2(self.width.max(self.height).max(self.depth).get() as _).floor() as usize
         } else {
             0
@@ -605,10 +604,11 @@ impl<F: TextureFormat> Texture<F> {
                 }
             })
         })?;
+        self.generate_mipmaps()?;
         Ok(())
     }
 
-    pub fn set_sub_data_2D(
+    pub fn set_sub_data_2d(
         &self,
         level: usize,
         x: i32,
@@ -653,13 +653,13 @@ impl<F: TextureFormat> Texture<F> {
         })
     }
 
-    pub fn generate_mipmaps(&mut self) -> Result<()> {
+    pub fn generate_mipmaps(&self) -> Result<()> {
         gl_error_guard(|| {
             self.with_binding(|| unsafe {
                 gl::GenerateMipmap(self.id.target.gl_target());
             })
         })?;
-        self.has_mipmaps = true;
+        self.has_mipmaps.store(true, Ordering::Relaxed);
         Ok(())
     }
 
@@ -772,9 +772,10 @@ impl Texture<[f32; 2]> {
     pub fn load_rg32f<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_repr = path.as_ref().display().to_string();
         tracing::info!("Loading {}", path_repr);
-        let img = image::open(path)
+        let mut img = image::open(path)
             .context("Cannot load image from {}")?
             .into_rgb32f();
+        image::imageops::flip_vertical_in_place(&mut img);
         let data = img
             .pixels()
             .flat_map(|px| {

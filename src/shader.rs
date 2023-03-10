@@ -1,16 +1,16 @@
-use std::{ffi::{CString}, fmt, num::NonZeroU32, path::Path};
+use std::{ffi::CString, fmt, num::NonZeroU32, path::Path};
 use std::fmt::Formatter;
+use std::marker::PhantomData;
 
 use eyre::{Context, Result};
-
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
-use crate::utils::{gl_string};
+use crate::utils::gl_string;
 
-pub type VertexShader = Shader<{gl::VERTEX_SHADER}>;
-pub type FragmentShader = Shader<{gl::FRAGMENT_SHADER}>;
-pub type GeometryShader = Shader<{gl::GEOMETRY_SHADER}>;
+pub type VertexShader = Shader<{ gl::VERTEX_SHADER }>;
+pub type FragmentShader = Shader<{ gl::FRAGMENT_SHADER }>;
+pub type GeometryShader = Shader<{ gl::GEOMETRY_SHADER }>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive)]
 #[repr(u32)]
@@ -51,6 +51,7 @@ impl<const K: u32> ShaderId<K> {
 #[derive(Debug)]
 /// OpenGL shader, a unit of work in an OpenGL pipeline.
 pub struct Shader<const K: u32> {
+    __non_send: PhantomData<*mut ()>,
     /// Shader ID. Guaranteed to be non-zero, as ID 0 is reserved for unbinding shaders.
     pub id: ShaderId<K>,
 }
@@ -91,13 +92,15 @@ impl<const K: u32> Shader<K> {
             eyre::bail!(error);
         } else {
             Ok(Self {
+                __non_send: PhantomData,
                 id: ShaderId::new(id).unwrap(),
             })
         }
     }
 
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
         let source = std::fs::read_to_string(path).context("Cannot read shader source")?;
-        Self::new(&source)
+        Self::new(&source).context(format!("Loading {}", path.display()))
     }
 }

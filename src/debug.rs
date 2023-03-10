@@ -88,3 +88,23 @@ pub fn set_message_callback<F: 'static + Fn(GlDebugData)>(cb: F) {
         }
     }
 }
+
+pub fn hook_gl_to_tracing() {
+    use CallbackSeverity::*;
+    set_message_callback(|data| {
+        match data.severity {
+            Notification => {
+                tracing::debug!(target: "gl", source=?data.source, message=%data.message, r#type=?data.r#type)
+            }
+            Low => {
+                tracing::info!(target: "gl", source=?data.source, message=%data.message, r#type=?data.r#type)
+            }
+            Medium => {
+                tracing::warn!(target: "gl", source=?data.source, message=%data.message, r#type=?data.r#type)
+            }
+            High => {
+                tracing::error!(target: "gl", source=?data.source, message=%data.message, r#type=?data.r#type)
+            }
+        };
+    });
+}
