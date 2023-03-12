@@ -13,6 +13,8 @@ use duplicate::duplicate_item as duplicate;
 use eyre::{Context, Result};
 use gl::types::*;
 use glam::{UVec2, UVec3};
+#[cfg(feature = "img")]
+use image::GenericImageView;
 use num_derive::FromPrimitive;
 
 use crate::{
@@ -749,41 +751,52 @@ impl<F: TextureFormat> Texture<F> {
 
 #[cfg(feature = "img")]
 impl Texture<[f32; 4]> {
+    pub fn from_dynamic_image(image: image::DynamicImage) -> Result<Self> {
+        Self::from_image(image.into_rgba32f())
+    }
+
     pub fn load_rgba32f<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_repr = path.as_ref().display().to_string();
         tracing::info!("Loading {}", path_repr);
-        let img = image::open(path).context("Cannot load image from {}")?;
-        Self::from_image(img.to_rgba32f())
+        let img = image::open(path).with_context(|| format!("Cannot load image from {}", path_repr))?;
+        Self::from_dynamic_image(img)
     }
 }
 
 #[cfg(feature = "img")]
 impl Texture<[f32; 3]> {
+    pub fn from_dynamic_image(image: image::DynamicImage) -> Result<Self> {
+        Self::from_image(image.into_rgb32f())
+    }
+
     pub fn load_rgb32f<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_repr = path.as_ref().display().to_string();
         tracing::info!("Loading {}", path_repr);
         let img = image::open(path).with_context(|| format!("Cannot load image from {}", path_repr))?;
-        Self::from_image(img.to_rgb32f())
+        Self::from_dynamic_image(img)
     }
 }
 
 #[cfg(feature = "img")]
 impl Texture<[f32; 2]> {
-    pub fn load_rg32f<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let path_repr = path.as_ref().display().to_string();
-        tracing::info!("Loading {}", path_repr);
-        let mut img = image::open(path)
-            .context("Cannot load image from {}")?
-            .into_rgb32f();
-        image::imageops::flip_vertical_in_place(&mut img);
-        let data = img
+    pub fn from_dynamic_image(image: image::DynamicImage) -> Result<Self> {
+        let (width, _) = image.dimensions();
+        let data = image.flipv().into_rgb32f()
             .pixels()
             .flat_map(|px| {
                 let [r, g, _] = px.0;
                 [r, g]
             })
             .collect::<Vec<_>>();
-        Self::from_2d_pixels(img.width().try_into()?, &data).context("Cannot upload texture")
+        Self::from_2d_pixels(width.try_into()?, &data).context("Cannot upload texture")
+    }
+
+    pub fn load_rg32f<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let path_repr = path.as_ref().display().to_string();
+        tracing::info!("Loading {}", path_repr);
+        let img = image::open(path)
+            .context("Cannot load image from {}")?;
+        Self::from_dynamic_image(img)
     }
 }
 
