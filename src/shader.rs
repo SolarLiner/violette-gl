@@ -98,6 +98,43 @@ impl<const K: u32> Shader<K> {
         }
     }
 
+    pub fn new_multiple<'s>(sources: impl IntoIterator<Item=&'s str>) -> Result<Self> {
+        let id = unsafe { gl::CreateShader(K) };
+        tracing::trace!("glCreateShader({:?}) -> {}", K, id);
+        let success = unsafe {
+            let sources = std::iter::once("#version 330 core\n".to_string())
+                .chain(
+                    sources
+                        .into_iter()
+                        .enumerate()
+                        .map(|(ix, s)| format!("#line 1 {}\n{}", ix, s)),
+                )
+                .map(|s| CString::new(s).unwrap())
+                .collect::<Vec<_>>();
+            let sources = sources.iter().map(|cs| cs.as_ptr()).collect::<Vec<_>>();
+            gl::ShaderSource(id, sources.len() as _, sources.as_ptr(), std::ptr::null());
+            gl::CompileShader(id);
+            let mut success = 0;
+            gl::GetShaderiv(id, gl::COMPILE_STATUS, &mut success);
+            success == 1
+        };
+        if !success {
+            let error = unsafe {
+                let mut length = 0;
+                gl::GetShaderiv(id, gl::INFO_LOG_LENGTH, &mut length);
+                gl_string(Some(length as _), |len, len_ptr, ptr| {
+                    gl::GetShaderInfoLog(id, len as _, len_ptr, ptr)
+                })
+            };
+            eyre::bail!(error);
+        } else {
+            Ok(Self {
+                __non_send: PhantomData,
+                id: ShaderId::new(id).unwrap(),
+            })
+        }
+    }
+
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let source = std::fs::read_to_string(path).context("Cannot read shader source")?;
