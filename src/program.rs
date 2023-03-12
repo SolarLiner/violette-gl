@@ -512,6 +512,9 @@ impl Program<Linked> {
         location: UniformBlockIndex,
         binding: u32,
     ) -> Result<()> {
+        if buf.size == 0 {
+            return Ok(());
+        }
         // Check that the location is valid
         if location.block_index != gl::INVALID_INDEX {
             gl_error_guard(|| unsafe {

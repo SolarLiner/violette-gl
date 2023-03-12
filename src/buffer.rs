@@ -187,7 +187,9 @@ impl<T: Pod, const K: u32> Buffer<T, K> {
     pub fn set(&mut self, data: &[T], usage_hint: BufferUsageHint) -> Result<()> {
         self.bind();
         let bytes = if K == BufferKind::Uniform as u32 {
-            let alignment = next_multiple(std::mem::size_of::<T>(), *GL_ALIGNMENT);
+            let sizeof = std::mem::size_of::<T>();
+            let gl_alignment = *GL_ALIGNMENT;
+            let alignment = next_multiple(sizeof, gl_alignment);
             data.iter()
                 .flat_map(|x| {
                     let bytes = bytemuck::bytes_of(x);
