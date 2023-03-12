@@ -17,6 +17,7 @@ use crate::{
     utils::{gl_error_guard, GlRef},
     vertex::{DrawMode, VertexArray},
 };
+use crate::texture::Mipmap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FramebufferId(u32);
@@ -315,7 +316,8 @@ impl Framebuffer {
         })
     }
 
-    pub fn attach_color<F>(&self, attachment: u8, texture: &Texture<F>) -> Result<()> {
+    pub fn attach_color<F>(&self, attachment: u8, target: Mipmap<F>) -> Result<()> {
+        let texture = target.texture;
         tracing::trace!("glFramebufferTexture{}D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT_{}, GL_TEXTURE_{}D, {}, 0)",
             texture.dimension().num_dimension(), attachment, texture.dimension().num_dimension(), texture.raw_id());
         self.with_binding(|| {
@@ -324,7 +326,7 @@ impl Framebuffer {
                     gl::FRAMEBUFFER,
                     gl::COLOR_ATTACHMENT0 + attachment as GLenum,
                     texture.raw_id(),
-                    0,
+                    target.level as GLint,
                 );
             })
         })

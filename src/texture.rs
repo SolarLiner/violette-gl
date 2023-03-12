@@ -481,43 +481,12 @@ impl<F: TextureFormat> Texture<F> {
         Ok(data[0])
     }
 
-    pub fn download(&self, level: usize) -> Result<Vec<F::Subpixel>> {
+    pub fn mipmap(&self, level: usize) -> Result<Mipmap<F>> {
         eyre::ensure!(
             level < self.num_mipmaps(),
             "Cannot get level higher than the number of mipmaps in this texture"
         );
-        self.bind();
-
-        let (width, height) = self.mipmap_size(level)?;
-        let size = width.get() as usize
-            * height.get() as usize
-            * F::COUNT
-            * std::mem::size_of::<F::Subpixel>();
-
-        let mut data = vec![F::Subpixel::zeroed(); size];
-        gl_error_guard(|| unsafe {
-            gl::GetTexImage(
-                self.id.target.gl_target(),
-                level as _,
-                F::FORMAT,
-                F::Subpixel::GL_TYPE,
-                // (std::mem::size_of::<F::Subpixel>() * size) as _,
-                data.as_mut_ptr().cast(),
-            );
-        })?;
-        Ok(data)
-    }
-
-    #[cfg(feature = "img")]
-    pub fn download_image<P: 'static + image::Pixel<Subpixel = F::Subpixel>>(
-        &self,
-        level: usize,
-    ) -> Result<image::ImageBuffer<P, Vec<P::Subpixel>>> {
-        let (width, height) = self.mipmap_size(level)?;
-        let data = self.download(level)?;
-        let mut image = image::ImageBuffer::from_vec(width.get(), height.get(), data).unwrap();
-        image::imageops::flip_vertical_in_place(&mut image);
-        Ok(image)
+        Ok(Mipmap { texture: self, level })
     }
 
     #[cfg(feature = "img")]
@@ -800,4 +769,66 @@ impl Texture<[f32; 2]> {
     }
 }
 
-impl<F: TextureFormat> Texture<F> {}
+#[derive(Debug, Copy, Clone)]
+pub struct Mipmap<'a, F> {
+    pub(crate) texture: &'a Texture<F>,
+    pub(crate) level: usize,
+}
+
+impl<'a, F> PartialEq for Mipmap<'a, F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.texture as *const _ == other.texture as *const _ && self.level == other.level
+    }
+}
+
+impl<'a, F> Eq for Mipmap<'a, F> {}
+
+impl<'a, F: TextureFormat> Mipmap<'a, F> {
+    pub fn size(&self) -> (NonZeroU32, NonZeroU32) {
+        self.texture.bind();
+        let mut width = 0;
+        let mut height = 0;
+        unsafe {
+            gl::GetTexLevelParameteriv(
+                self.texture.id.target.gl_target(),
+                self.level as _,
+                gl::TEXTURE_WIDTH,
+                &mut width,
+            );
+            gl::GetTexLevelParameteriv(
+                self.texture.id.target.gl_target(),
+                self.level as _,
+                gl::TEXTURE_HEIGHT,
+                &mut height,
+            );
+        }
+        let width = NonZeroU32::new(width as _).expect("Zero OpenGL texture size");
+        let height = NonZeroU32::new(height as _).expect("Zero OpenGL texture size");
+        (width, height)
+    }
+
+    pub fn download(&self) -> Result<Vec<F::Subpixel>> {
+        self.texture.bind();
+        let (w, h) = self.size();
+        let size = (w.get() * h.get()) as usize * F::COUNT;
+        let mut data = vec![F::Subpixel::zeroed(); size];
+        gl_error_guard(|| unsafe {
+            gl::GetTexImage(
+                self.texture.id.target.gl_target(),
+                self.level as _,
+                F::FORMAT,
+                F::Subpixel::GL_TYPE,
+                // (std::mem::size_of::<F::Subpixel>() * size) as _,
+                data.as_mut_ptr().cast(),
+            );
+        })?;
+        Ok(data)
+    }
+
+    #[cfg(feature = "img")]
+    pub fn download_image<P: image::Pixel<Subpixel=F::Subpixel>>(&self) -> Result<image::ImageBuffer<P, Vec<P::Subpixel>>> {
+        let (width, height) = self.size();
+        let data = self.download()?;
+        Ok(image::ImageBuffer::from_vec(width.get(), height.get(), data).unwrap())
+    }
+}
