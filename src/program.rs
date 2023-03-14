@@ -542,43 +542,44 @@ impl Program<Linked> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct UniformDesc {
-    pub uniform_location: u32,
-    pub program_location: u32,
-    pub block_index: u32,
     program: ProgramId,
-    name_length: usize,
-    raw_type: u32,
+    pub uniform_location: u32,
+    // pub program_location: u32,
+    // pub block_index: u32,
+    // name_length: usize,
+    // raw_type: u32,
 }
 
 impl UniformDesc {
-    const PROG_IFACE_LEN: usize = 4;
-    const PROGRAM_INTERFACE: [GLenum; Self::PROG_IFACE_LEN] =
-        [gl::NAME_LENGTH, gl::TYPE, gl::BLOCK_INDEX, gl::LOCATION];
+    // const PROG_IFACE_LEN: usize = 4;
+    // const PROGRAM_INTERFACE: [GLenum; Self::PROG_IFACE_LEN] =
+    //     [gl::NAME_LENGTH, gl::TYPE, gl::BLOCK_INDEX, gl::LOCATION];
 
     fn for_uniform_at_location(program: ProgramId, location: u32) -> UniformDesc {
-        let mut values = [0; Self::PROG_IFACE_LEN];
-        unsafe {
-            gl::GetProgramResourceiv(
-                program.get(),
-                gl::UNIFORM,
-                location,
-                Self::PROG_IFACE_LEN as _,
-                Self::PROGRAM_INTERFACE.as_ptr(),
-                Self::PROG_IFACE_LEN as _,
-                std::ptr::null_mut(),
-                values.as_mut_ptr(),
-            );
-        }
+        // let mut values = [0; Self::PROG_IFACE_LEN];
+        // unsafe {
+        //     gl::GetProgramResourceiv(
+        //         program.get(),
+        //         gl::UNIFORM,
+        //         location,
+        //         Self::PROG_IFACE_LEN as _,
+        //         Self::PROGRAM_INTERFACE.as_ptr(),
+        //         Self::PROG_IFACE_LEN as _,
+        //         std::ptr::null_mut(),
+        //         values.as_mut_ptr(),
+        //     );
+        // }
         UniformDesc {
             program,
             uniform_location: location,
-            program_location: values[3] as _,
-            name_length: values[0] as _,
-            block_index: values[2] as _,
-            raw_type: values[1] as _,
+            // program_location: values[3] as _,
+            // name_length: values[0] as _,
+            // block_index: values[2] as _,
+            // raw_type: values[1] as _,
         }
     }
 
+    #[cfg(never)]
     pub fn name(&self) -> Cow<str> {
         gl_string(
             Some(self.name_length as _),
@@ -595,6 +596,7 @@ impl UniformDesc {
         )
     }
 
+    #[cfg(never)]
     pub fn is_type<T: GlType>(&self) -> bool {
         T::GL_TYPE == self.raw_type
     }
