@@ -48,6 +48,19 @@ impl Uniform for gl_t {
 }
 
 #[duplicate(
+gl_t            uniform;
+[GLint]         [Uniform1iv];
+[GLuint]        [Uniform1uiv];
+[GLfloat]       [Uniform1fv];
+[GLdouble]      [Uniform1dv];
+)]
+impl Uniform for &[gl_t] {
+    unsafe fn write_uniform(&self, location: GLint) {
+        gl::uniform(location, self.len() as _, self.as_ptr())
+    }
+}
+
+#[duplicate(
 gl_t        uniform;
 [GLint]     [Uniform2i];
 [GLuint]    [Uniform2ui];
@@ -155,6 +168,19 @@ impl Uniform for glam_t {
     }
 }
 
+#[cfg(feature = "uniforms-glam")]
+#[duplicate(
+glam_t          uniform;
+[glam::Vec2]    [Uniform2fv];
+[glam::Vec3]    [Uniform3fv];
+[glam::Vec4]    [Uniform4fv];
+)]
+impl Uniform for &[glam_t] {
+    unsafe fn write_uniform(&self, location: GLint) {
+        gl::uniform(location, self.len() as _, self.as_ptr().cast())
+    }
+}
+
 impl<L: Uniform, R: Uniform> Uniform for Either<L, R> {
     unsafe fn write_uniform(&self, location: GLint) {
         match self {
@@ -188,6 +214,10 @@ impl UniformLocation {
         self.desc.is_some()
     }
 
+    pub fn is_used(&self) -> bool {
+        self.desc.is_some()
+    }
+
     pub fn desc(&self) -> Option<&UniformDesc> {
         self.desc.as_ref()
     }
@@ -197,6 +227,12 @@ impl UniformLocation {
 pub struct UniformBlockIndex {
     program: ProgramId,
     block_index: u32,
+}
+
+impl UniformBlockIndex {
+    pub fn is_used(&self) -> bool {
+        self.block_index != gl::INVALID_INDEX
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
