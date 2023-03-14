@@ -777,7 +777,7 @@ pub struct Mipmap<'a, F> {
 
 impl<'a, F> PartialEq for Mipmap<'a, F> {
     fn eq(&self, other: &Self) -> bool {
-        self.texture as *const _ == other.texture as *const _ && self.level == other.level
+        std::ptr::eq(self.texture, other.texture) && self.level == other.level
     }
 }
 
