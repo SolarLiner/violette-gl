@@ -1,9 +1,13 @@
+use std::marker::PhantomData;
 use std::{
     fmt::{self, Formatter},
     num::NonZeroU32,
 };
-use std::marker::PhantomData;
 
+use eyre::Result;
+use gl::types::GLenum;
+
+use crate::buffer::ElementBuffer;
 use crate::{
     base::{
         resource::{Resource, ResourceExt},
@@ -12,11 +16,6 @@ use crate::{
     buffer::ArrayBuffer,
     utils::gl_error_guard,
 };
-
-use eyre::Result;
-use gl::types::GLenum;
-
-use crate::buffer::ElementBuffer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VertexDesc {

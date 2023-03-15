@@ -1,8 +1,8 @@
+use std::marker::PhantomData;
 use std::{
     fmt::{self, Formatter},
     ops::{Range, RangeBounds},
 };
-use std::marker::PhantomData;
 
 use bitflags::bitflags;
 use eyre::Result;
@@ -10,6 +10,7 @@ use gl::types::*;
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
+use crate::texture::Mipmap;
 use crate::{
     base::resource::{Resource, ResourceExt},
     program::Program,
@@ -17,7 +18,6 @@ use crate::{
     utils::{gl_error_guard, GlRef},
     vertex::{DrawMode, VertexArray},
 };
-use crate::texture::Mipmap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FramebufferId(u32);

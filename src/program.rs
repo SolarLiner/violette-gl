@@ -1,3 +1,4 @@
+use std::marker::PhantomData;
 use std::{
     borrow::Cow,
     ffi::CString,
@@ -5,7 +6,6 @@ use std::{
     num::NonZeroU32,
     path::Path,
 };
-use std::marker::PhantomData;
 
 use duplicate::duplicate_item as duplicate;
 use either::Either;
@@ -14,8 +14,8 @@ use gl::types::{GLdouble, GLenum, GLfloat, GLint, GLuint};
 
 use crate::{
     base::{
-        GlType,
         resource::{Resource, ResourceExt},
+        GlType,
     },
     buffer::BufferSlice,
     shader::{FragmentShader, GeometryShader, ShaderId, VertexShader},
@@ -531,7 +531,8 @@ impl Program<Linked> {
                         location.program.get()
                     );
                 }
-        */        // Check that the location is valid
+        */
+        // Check that the location is valid
         if let Some(desc) = &location.desc {
             gl_error_guard(|| {
                 self.with_binding(|| unsafe { value.write_uniform(desc.uniform_location as _) })

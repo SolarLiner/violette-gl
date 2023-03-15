@@ -1,6 +1,6 @@
-use std::{ffi::CString, fmt, num::NonZeroU32, path::Path};
 use std::fmt::Formatter;
 use std::marker::PhantomData;
+use std::{ffi::CString, fmt, num::NonZeroU32, path::Path};
 
 use eyre::{Context, Result};
 use num_derive::FromPrimitive;
@@ -98,7 +98,7 @@ impl<const K: u32> Shader<K> {
         }
     }
 
-    pub fn new_multiple<'s>(sources: impl IntoIterator<Item=&'s str>) -> Result<Self> {
+    pub fn new_multiple<'s>(sources: impl IntoIterator<Item = &'s str>) -> Result<Self> {
         let id = unsafe { gl::CreateShader(K) };
         tracing::trace!("glCreateShader({:?}) -> {}", K, id);
         let success = unsafe {

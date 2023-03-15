@@ -298,12 +298,14 @@ impl<'buf, T: bytemuck::Pod, const K: u32> BufferSlice<'buf, T, K> {
     pub fn set(&mut self, at: usize, value: &T) -> Result<()> {
         let offset = self.offset + (at * self.alignment) as GLintptr;
         let bytes = bytemuck::bytes_of(value);
-        self.buffer.with_binding(|| gl_error_guard(|| unsafe {
-            let access = BufferAccess::MAP_WRITE;
-            let ptr = gl::MapBufferRange(K, offset, self.size, access.bits);
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, self.alignment as _);
-            gl::UnmapBuffer(K);
-        }))
+        self.buffer.with_binding(|| {
+            gl_error_guard(|| unsafe {
+                let access = BufferAccess::MAP_WRITE;
+                let ptr = gl::MapBufferRange(K, offset, self.size, access.bits);
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, self.alignment as _);
+                gl::UnmapBuffer(K);
+            })
+        })
     }
 
     pub fn set_all(&mut self, data: &[T], access: BufferAccess) -> Result<()> {

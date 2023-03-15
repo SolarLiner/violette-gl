@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     fmt,
     fmt::Formatter,
@@ -6,7 +7,6 @@ use std::{
     ops::{Deref, DerefMut},
     path::Path,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytemuck::{Pod, Zeroable};
 use duplicate::duplicate_item as duplicate;
@@ -19,8 +19,8 @@ use num_derive::FromPrimitive;
 
 use crate::{
     base::{
-        GlType,
         resource::{Resource, ResourceExt},
+        GlType,
     },
     program::Uniform,
     utils::gl_error_guard,
@@ -486,7 +486,10 @@ impl<F: TextureFormat> Texture<F> {
             level < self.num_mipmaps(),
             "Cannot get level higher than the number of mipmaps in this texture"
         );
-        Ok(Mipmap { texture: self, level })
+        Ok(Mipmap {
+            texture: self,
+            level,
+        })
     }
 
     #[cfg(feature = "img")]
@@ -727,7 +730,8 @@ impl Texture<[f32; 4]> {
     pub fn load_rgba32f<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_repr = path.as_ref().display().to_string();
         tracing::info!("Loading {}", path_repr);
-        let img = image::open(path).with_context(|| format!("Cannot load image from {}", path_repr))?;
+        let img =
+            image::open(path).with_context(|| format!("Cannot load image from {}", path_repr))?;
         Self::from_dynamic_image(img)
     }
 }
@@ -741,7 +745,8 @@ impl Texture<[f32; 3]> {
     pub fn load_rgb32f<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_repr = path.as_ref().display().to_string();
         tracing::info!("Loading {}", path_repr);
-        let img = image::open(path).with_context(|| format!("Cannot load image from {}", path_repr))?;
+        let img =
+            image::open(path).with_context(|| format!("Cannot load image from {}", path_repr))?;
         Self::from_dynamic_image(img)
     }
 }
@@ -750,7 +755,9 @@ impl Texture<[f32; 3]> {
 impl Texture<[f32; 2]> {
     pub fn from_dynamic_image(image: image::DynamicImage) -> Result<Self> {
         let (width, _) = image.dimensions();
-        let data = image.flipv().into_rgb32f()
+        let data = image
+            .flipv()
+            .into_rgb32f()
             .pixels()
             .flat_map(|px| {
                 let [r, g, _] = px.0;
@@ -763,8 +770,7 @@ impl Texture<[f32; 2]> {
     pub fn load_rg32f<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_repr = path.as_ref().display().to_string();
         tracing::info!("Loading {}", path_repr);
-        let img = image::open(path)
-            .context("Cannot load image from {}")?;
+        let img = image::open(path).context("Cannot load image from {}")?;
         Self::from_dynamic_image(img)
     }
 }
@@ -826,7 +832,9 @@ impl<'a, F: TextureFormat> Mipmap<'a, F> {
     }
 
     #[cfg(feature = "img")]
-    pub fn download_image<P: image::Pixel<Subpixel=F::Subpixel>>(&self) -> Result<image::ImageBuffer<P, Vec<P::Subpixel>>> {
+    pub fn download_image<P: image::Pixel<Subpixel = F::Subpixel>>(
+        &self,
+    ) -> Result<image::ImageBuffer<P, Vec<P::Subpixel>>> {
         let (width, height) = self.size();
         let data = self.download()?;
         Ok(image::ImageBuffer::from_vec(width.get(), height.get(), data).unwrap())
